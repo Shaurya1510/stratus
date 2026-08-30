@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Stratus runtime state — never belongs in version control.
+# Device identities, private keys, join tokens and server databases all live
+# outside the checkout, but these guard against a stray copy being committed.
+.runtime/
+data/
+*.db
+*.db-wal
+*.db-shm
+StratusData/
+device.json
+known-peers.json
+active-server.json
+servers.json
+*.token
+
+# Build and packaging output
+*.tar.gz
+node_modules/
+
+# Scaffolding used to produce the written proposal document. Not part of the
+# project itself, so it is kept out of the repository.
+_docx_qa/
+template_work/
+inspect_docx.py
+make_template_compliant_proposal.py
+refine_stratus_proposal.py
+review_proposal_docs.py
+*.docx
+
+# Editors and desktops
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

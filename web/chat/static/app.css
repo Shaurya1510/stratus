@@ -1,0 +1,65 @@
+:root{font-family:Inter,ui-sans-serif,system-ui;color:#e9edf8;background:#0b1020}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 70% 0,#182850 0,#0b1020 45%);min-height:100vh}button,input,textarea{font:inherit}.shell{display:grid;grid-template-columns:270px 1fr;height:100vh;padding:18px;gap:16px}aside,.chat{border:1px solid #283454;background:#11182bdf;border-radius:22px;overflow:hidden}.brand{display:flex;gap:12px;align-items:center;padding:22px}.brand>span,.brand-mark{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,#7c5cff,#3bb9ff);font-weight:900}.brand small,.brand strong{display:block}.brand small,header p{color:#8996b3}.new-room{display:flex;padding:0 16px 16px}.new-room input{width:100%;background:#0b1121;border:1px solid #2a385d;border-radius:12px 0 0 12px;color:white;padding:11px}.new-room button{border:0;background:#755cff;color:white;border-radius:0 12px 12px 0;width:44px}nav{display:grid;gap:5px;padding:0 12px}nav a{color:#aeb8cf;text-decoration:none;padding:11px 13px;border-radius:11px}nav a span{color:#6f7e9f;margin-right:9px}.active{background:#273355!important;color:white!important}.browse,.logout{margin:12px 16px;width:calc(100% - 32px);padding:10px;border:1px solid #2a385d;border-radius:11px;background:transparent;color:#aeb8cf}.logout{position:absolute;bottom:22px;width:238px}.chat{display:grid;grid-template-rows:auto 1fr auto}header{display:flex;justify-content:space-between;padding:23px 28px;border-bottom:1px solid #283454}h1{margin:0}header p{margin:5px 0 0;font-size:13px}.live{color:#79e9b2}.live i{display:inline-block;width:8px;height:8px;background:#42df95;border-radius:50%}.messages{overflow:auto;padding:24px 30px}.messages article{display:flex;gap:12px;margin-bottom:20px}.avatar{display:grid;place-items:center;flex:0 0 38px;height:38px;border-radius:13px;background:#293557;font-weight:800}.messages b{margin-right:9px}.messages time{font-size:11px;color:#71809f}.messages p{margin:5px 0;line-height:1.45;color:#d4daea;white-space:pre-wrap}#composer{display:flex;gap:12px;padding:18px 24px;border-top:1px solid #283454}textarea{flex:1;resize:none;background:#0b1121;border:1px solid #2a385d;border-radius:14px;padding:13px;color:white}#composer button,.auth-card button{border:0;border-radius:13px;background:linear-gradient(135deg,#775cff,#438fff);color:white;padding:0 22px;font-weight:700}.auth{display:grid;place-items:center}.auth-card{width:min(420px,calc(100% - 32px));background:#11182be8;border:1px solid #283454;border-radius:24px;padding:32px;box-shadow:0 25px 80px #0008}.auth-card p{color:#8996b3}.auth-card label{display:grid;gap:7px;margin:16px 0;color:#aeb8cf}.auth-card input{padding:13px;border-radius:12px;border:1px solid #2a385d;background:#0b1121;color:white}.auth-card button{width:100%;padding:13px}.auth-card a{display:block;text-align:center;color:#8f9eff;margin-top:18px}.error{background:#4d1d2c;color:#ffbdc9;padding:11px;border-radius:10px}dialog{color:#e9edf8;background:#11182b;border:1px solid #34436a;border-radius:18px;min-width:320px}dialog::backdrop{background:#050816cc}#roomList form{display:flex;justify-content:space-between;align-items:center;padding:11px;border-bottom:1px solid #283454}#roomList em{color:#7fe4af}@media(max-width:700px){.shell{grid-template-columns:88px 1fr;padding:8px;gap:8px}.brand div,.new-room,nav a:not(.active)~span,.browse,.logout{font-size:0}.brand{padding:16px}.brand>span{width:38px;height:38px}nav a{overflow:hidden;white-space:nowrap}.logout{width:56px;margin-left:8px}.chat header{padding:18px}.messages{padding:18px 14px}}
+
+/* Unlock screen, unread badges and the group picker used by the E2EE client. */
+.lock{display:grid;place-items:center;min-height:100vh;padding:20px}
+.lock-card{width:min(460px,100%);background:#11182be8;border:1px solid #283454;border-radius:24px;padding:32px;box-shadow:0 25px 80px #0008}
+.lock-card h1{margin:16px 0 6px}
+.lock-card label{display:grid;gap:7px;margin:18px 0;color:#aeb8cf}
+.lock-card input[type=password]{padding:13px;border-radius:12px;border:1px solid #2a385d;background:#0b1121;color:white}
+.lock-card button{width:100%;padding:13px;border:0;border-radius:13px;background:linear-gradient(135deg,#775cff,#438fff);color:white;font-weight:700}
+.lock-card button[disabled]{opacity:.6}
+.checkbox{display:flex!important;align-items:flex-start;gap:9px;color:#aeb8cf;font-size:14px}
+.checkbox input{margin-top:3px}
+.checkbox small{display:block;color:#78849a}
+.muted{color:#8996b3}
+.centred{text-align:center;padding:40px 0}
+.steps{color:#aeb8cf;line-height:1.7;padding-left:20px}
+.steps code{background:#0b1121;border:1px solid #2a385d;border-radius:6px;padding:1px 6px}
+.signout{margin-top:14px;text-align:center}
+.linkish{background:none!important;border:0;color:#8f9eff;width:auto!important;padding:4px!important;cursor:pointer;font-weight:500!important}
+.badge{float:right;background:#755cff;color:white;border-radius:10px;padding:0 7px;font-size:11px;font-style:normal}
+.sidebar-foot{position:absolute;bottom:16px;left:16px;right:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sidebar-foot .who{color:#8996b3;font-size:12px;flex:1 0 100%}
+.sidebar-foot form{display:inline}
+.member-list{display:grid;gap:8px;max-height:250px;overflow:auto;margin:14px 0}
+.member-list label{display:flex;gap:9px;align-items:center;color:#d4daea}
+.dialog-buttons{display:flex;justify-content:flex-end;gap:8px}
+.dialog-buttons button{padding:9px 16px;border-radius:10px;border:1px solid #34436a;background:transparent;color:#d4daea}
+.dialog-buttons button[type=submit]{background:#755cff;border:0;color:white}
+#groupName{width:100%;padding:12px;border-radius:10px;border:1px solid #2a385d;background:#0b1121;color:white}
+.messages article.mine b{color:#7ee2a8}
+.undecryptable{color:#ffbdc9;font-style:italic}
+.error{background:#4d1d2c;color:#ffbdc9;padding:11px;border-radius:10px;margin:12px 0}
+
+/* The unlock card holds its form as a child, plus a separate sign-out form. */
+.lock-card > form { margin: 0 }
+.lock-help { font-size: 13px; margin: 14px 0 4px }
+.signout { margin-top: 6px; text-align: center }
+
+/* The hidden attribute is only display:none in the browser's default
+   stylesheet, so any class rule setting display beats it. .shell, .lock and
+   main all set display:grid, which meant `hidden` did nothing and the unlock
+   screen stayed on top of the chat panel it had just revealed. This puts the
+   attribute back in charge wherever it is used. */
+[hidden] { display: none !important; }
+
+
+/* Date separators, grouped messages, attachments and the member line. */
+.members { margin: 3px 0 0; font-size: 12px; color: #6f7e9f }
+.day { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; color: #6f7e9f; font-size: 12px }
+.day::before, .day::after { content: ""; flex: 1; height: 1px; background: #283454 }
+.messages article.grouped { margin-top: -12px }
+.messages article.grouped .avatar { background: transparent }
+.attachment { display: flex; align-items: center; gap: 10px }
+.attachment .clip { opacity: .8 }
+.attachment .filename { color: #d4daea; font-weight: 600 }
+.attachment .get {
+  border: 1px solid #2a385d; background: transparent; color: #8f9eff;
+  border-radius: 8px; padding: 4px 10px; cursor: pointer;
+}
+.attachment .get:hover { border-color: #755cff; color: white }
+#attachButton {
+  border: 1px solid #2a385d; background: #0b1121; color: #aeb8cf;
+  border-radius: 12px; padding: 0 14px; cursor: pointer; font-size: 16px;
+}
+#attachButton:disabled { opacity: .5 }

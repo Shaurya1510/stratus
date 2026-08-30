@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stratus Chat</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=v) }}">
+</head>
+<body>
+
+<!-- Nothing is decrypted until the member unseals their key in this browser. -->
+<!-- The sign-out form is a sibling of the unlock form, never a child. HTML
+     forbids nested forms: a browser silently drops the inner one, and its
+     button then belongs to the outer form, so "Sign out" would submit the
+     unlock form instead of signing out. -->
+<div id="lock" class="lock">
+  <div class="lock-card">
+    <div class="brand-mark">ST</div>
+    <h1>Unlock your messages</h1>
+    <p>You are signed in as <strong>{{ device.display_name }}</strong>, but your messages
+      are still encrypted.</p>
+    <p class="muted">Enter the browser passphrase you chose in the Stratus terminal under
+      <strong>Browser Access</strong>. It is checked here on this device; the server never
+      receives it and cannot open your messages without it.</p>
+    <form id="unlockForm">
+      <label>Browser passphrase
+        <input type="password" id="passphrase" autocomplete="current-password" required>
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" id="remember">
+        Stay unlocked on this browser
+        <small>Leave this off on a shared or lab computer.</small>
+      </label>
+      <div class="error" id="lockError" hidden></div>
+      <button type="submit" id="unlockButton">Unlock</button>
+    </form>
+    <p class="muted lock-help">Forgotten it? Open Browser Access in the terminal and set a new
+      one — nothing is lost.</p>
+    <form action="/logout" method="post" class="signout">
+      <button type="submit" class="linkish">Not {{ device.display_name }}? Sign out</button>
+    </form>
+  </div>
+</div>
+
+<main class="shell" id="shell" hidden>
+  <aside>
+    <div class="brand"><span>ST</span><div><strong>Stratus</strong><small>Chat</small></div></div>
+    <button type="button" class="browse" id="newGroup">New group</button>
+    <nav id="conversationList"></nav>
+    <div class="sidebar-foot">
+      <div class="who">{{ device.display_name }}</div>
+      <button type="button" class="linkish" id="lockAgain">Lock</button>
+      <form action="/logout" method="post"><button type="submit" class="linkish">Sign out</button></form>
+    </div>
+  </aside>
+
+  <section class="chat">
+    <header>
+      <div>
+        <h1 id="conversationTitle">General</h1>
+        <p id="conversationSubtitle">End-to-end encrypted · the host stores only ciphertext</p>
+        <p id="conversationMembers" class="members"></p>
+      </div>
+      <div class="live"><i></i> <span id="liveLabel">Live</span></div>
+    </header>
+    <div id="messages" class="messages"></div>
+    <form id="composer">
+      <input hidden id="attachInput" type="file">
+      <button type="button" id="attachButton" title="Attach a file">📎</button>
+      <textarea id="body" placeholder="Write a message…" maxlength="2000" rows="1"></textarea>
+      <button type="submit" id="sendButton">Send</button>
+    </form>
+  </section>
+</main>
+
+<dialog id="groupDialog">
+  <form id="groupForm">
+    <h2>Create an encrypted group</h2>
+    <input id="groupName" placeholder="Group name" maxlength="60" required>
+    <div id="groupMembers" class="member-list"></div>
+    <div class="dialog-buttons">
+      <button type="button" onclick="groupDialog.close()">Cancel</button>
+      <button type="submit">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="{{ url_for('static', filename='stratus-crypto.js', v=v) }}"></script>
+<script>
+const DEVICE_ID = {{ device.id | tojson }};
+const STORE_KEY = "stratus.key." + DEVICE_ID;
+
+let privateKey = null;            // never leaves this tab
+let conversations = [];
+let active = null;
+let lastId = 0;
+let seen = JSON.parse(localStorage.getItem("stratus.seen." + DEVICE_ID) || "{}");
+const plaintext = new Map();      // message id -> decrypted text
+let sending = false;
+
+const $ = (id) => document.getElementById(id);
+// Escapes quotes as well as angle brackets: several of these values are put
+// inside HTML attributes, where a bare " would end the attribute and let the
+// rest of the value become markup.
+const esc = (text) => String(text ?? "")
+  .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+  .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.error || ("Request failed: " + response.status));
+  }
+  return response.json();
+}
+
+/* ---------------------------------------------------------------- unlocking */
+
+async function useKey(pkcs8, remember) {
+  privateKey = await StratusCrypto.importPrivateKey(pkcs8);
+  try { (remember ? localStorage : sessionStorage).setItem(STORE_KEY, pkcs8); } catch (error) { /* private mode */ }
+  $("lock").hidden = true;
+  $("shell").hidden = false;
+  await loadConversations();
+  await openConversation(conversations[0]);
+  setInterval(poll, 1500);
+  setInterval(refreshBadges, 5000);
+}
+
+$("unlockForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("unlockButton");
+  button.disabled = true; button.textContent = "Unlocking…";
+  $("lockError").hidden = true;
+  try {
+    const blob = await api("/api/keyblob");
+    const pkcs8 = await StratusCrypto.unsealDeviceKey(blob, $("passphrase").value, DEVICE_ID);
+    await useKey(pkcs8, $("remember").checked);
+  } catch (error) {
+    $("lockError").textContent = error.message && error.message.includes("operation-specific")
+      ? "That passphrase does not open this key." : (error.message || "That passphrase did not work.");
+    $("lockError").hidden = false;
+  } finally {
+    button.disabled = false; button.textContent = "Unlock";
+  }
+});
+
+$("lockAgain").addEventListener("click", () => {
+  sessionStorage.removeItem(STORE_KEY); localStorage.removeItem(STORE_KEY); location.reload();
+});
+
+/* ------------------------------------------------------------ conversations */
+
+async function loadConversations() {
+  conversations = await api("/api/conversations");
+  renderConversations();
+}
+
+function renderConversations() {
+  const overview = window.__overview || {};
+  $("conversationList").innerHTML = conversations.map((item, index) => {
+    const last = (overview[item.id] || {}).last_id || 0;
+    const unread = item.id === (active && active.id) ? 0 : Math.max(0, last - (seen[item.id] || 0));
+    const mark = item.kind === "direct" ? "@" : "#";
+    return `<a href="#" data-index="${index}" class="${active && active.id === item.id ? "active" : ""}">
+      <span>${mark}</span>${esc(item.title)}${unread ? `<b class="badge">${unread}</b>` : ""}</a>`;
+  }).join("");
+  $("conversationList").querySelectorAll("a").forEach((node) => {
+    node.addEventListener("click", (event) => {
+      event.preventDefault();
+      openConversation(conversations[Number(node.dataset.index)]);
+    });
+  });
+}
+
+async function openConversation(item) {
+  if (!item) return;
+  active = item; lastId = 0; plaintext.clear();
+  lastSender = null; lastDay = null;
+  $("conversationTitle").textContent = (item.kind === "direct" ? "@ " : "# ") + item.title;
+  $("messages").innerHTML = `<p class="muted centred">Opening encrypted conversation…</p>`;
+  renderConversations();
+  try {
+    active.members = await api(`/api/conversations/${encodeURIComponent(item.id)}/members`);
+  } catch (error) {
+    $("messages").innerHTML = `<p class="error">${esc(error.message)}</p>`; return;
+  }
+  // Say plainly who can read this, since that is the whole point.
+  const names = active.members.map((m) => m.display_name).sort();
+  $("conversationMembers").textContent =
+    names.length > 4
+      ? `Readable by ${names.length} devices`
+      : `Readable by ${names.join(", ")}`;
+  $("messages").innerHTML = "";
+  await poll(true);
+}
+
+/* ----------------------------------------------------------------- messages */
+
+async function poll(first) {
+  if (!active || !privateKey) return;
+  const conversation = active.id;
+  let rows;
+  try {
+    rows = await api(`/api/conversations/${encodeURIComponent(conversation)}/messages?after=${lastId}`);
+  } catch (error) { $("liveLabel").textContent = "Reconnecting"; return; }
+  $("liveLabel").textContent = "Live";
+  if (conversation !== active.id) return;
+  if (first && !rows.length) {
+    $("messages").innerHTML = `<p class="muted centred">No messages yet. Say something.</p>`;
+    return;
+  }
+  if (rows.length && $("messages").querySelector(".centred")) $("messages").innerHTML = "";
+  for (const row of rows) {
+    lastId = Math.max(lastId, row.id);
+    let text = plaintext.get(row.id);
+    if (text === undefined) {
+      try {
+        text = await StratusCrypto.decryptText(row.payload, privateKey, DEVICE_ID, conversation);
+      } catch (error) { text = null; }
+      plaintext.set(row.id, text);
+    }
+    appendMessage(row, text);
+  }
+  if (rows.length) {
+    seen[conversation] = lastId;
+    localStorage.setItem("stratus.seen." + DEVICE_ID, JSON.stringify(seen));
+    $("messages").scrollTop = $("messages").scrollHeight;
+  }
+}
+
+let lastSender = null;   // for grouping consecutive messages
+let lastDay = null;      // for date separators
+
+function dayLabel(when) {
+  const today = new Date();
+  const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+  const same = (a, b) => a.toDateString() === b.toDateString();
+  if (same(when, today)) return "Today";
+  if (same(when, yesterday)) return "Yesterday";
+  return when.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+}
+
+// An attachment is sent as a marker line naming a Drive object, so the message
+// itself stays ordinary encrypted text. Recognising it here turns that line
+// into a real download button.
+const ATTACHMENT = /^\[Encrypted attachment: (.+) · Drive ID ([0-9a-f]{32})\]$/;
+
+function appendMessage(row, text) {
+  const mine = row.sender_device_id === DEVICE_ID;
+  const when = new Date((row.created_at || "").replace(" ", "T") + "Z");
+  const box = $("messages");
+
+  if (!isNaN(when)) {
+    const day = dayLabel(when);
+    if (day !== lastDay) {
+      box.insertAdjacentHTML("beforeend", `<div class="day"><span>${esc(day)}</span></div>`);
+      lastDay = day;
+      lastSender = null;      // always show the name after a date break
+    }
+  }
+
+  let body;
+  if (text === null) {
+    body = `<p class="undecryptable">This message was not encrypted for this device.</p>`;
+  } else {
+    const attachment = text.match(ATTACHMENT);
+    body = attachment
+      ? `<p class="attachment"><span class="clip">📎</span>
+           <span class="filename">${esc(attachment[1])}</span>
+           <button type="button" class="get" data-file="${attachment[2]}"
+                   data-name="${esc(attachment[1])}">Download</button></p>`
+      : `<p>${esc(text)}</p>`;
+  }
+
+  const grouped = row.sender_device_id === lastSender;
+  const time = isNaN(when) ? "" : when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  box.insertAdjacentHTML("beforeend", grouped
+    ? `<article class="grouped ${mine ? "mine" : ""}"><div class="avatar"></div><div>${body}</div></article>`
+    : `<article class="${mine ? "mine" : ""}">
+         <div class="avatar">${esc((row.sender_name || "?")[0].toUpperCase())}</div>
+         <div><b>${esc(row.sender_name || "unknown")}</b><time>${time}</time>${body}</div>
+       </article>`);
+  lastSender = row.sender_device_id;
+
+  box.querySelectorAll("button.get:not([data-wired])").forEach((node) => {
+    node.dataset.wired = "1";
+    node.addEventListener("click", () => fetchAttachment(node.dataset.file, node.dataset.name));
+  });
+}
+
+async function fetchAttachment(fileId, filename) {
+  try {
+    const item = await api(`/api/files/${fileId}`);
+    const bytes = await StratusCrypto.decrypt(item.payload, privateKey, DEVICE_ID, fileId);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([bytes]));
+    link.download = filename.split("/").pop() || "download.bin";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  } catch (error) { alert("Could not download: " + error.message); }
+}
+
+$("composer").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = $("body");
+  const text = input.value.trim();
+  if (!text || !active || sending) return;
+  sending = true; $("sendButton").disabled = true;
+  input.value = "";
+  try {
+    active.members = await api(`/api/conversations/${encodeURIComponent(active.id)}/members`);
+    const payload = await StratusCrypto.encryptText(text, active.members, active.id);
+    await api(`/api/conversations/${encodeURIComponent(active.id)}/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payload }),
+    });
+    await poll();
+  } catch (error) {
+    input.value = text;
+    alert(error.message);
+  } finally {
+    sending = false; $("sendButton").disabled = false; input.focus();
+  }
+});
+
+$("body").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("composer").requestSubmit(); }
+});
+
+async function refreshBadges() {
+  try { window.__overview = await api("/api/overview"); renderConversations(); } catch (error) { /* offline */ }
+}
+
+/* ------------------------------------------------------------------- groups */
+
+$("newGroup").addEventListener("click", async () => {
+  const people = (await api("/api/recipients")).filter((item) => item.id !== DEVICE_ID);
+  $("groupMembers").innerHTML = people.length
+    ? people.map((item) => `<label><input type="checkbox" value="${esc(item.id)}"> ${esc(item.display_name)}</label>`).join("")
+    : `<p class="muted">No other devices have joined yet.</p>`;
+  $("groupDialog").showModal();
+});
+
+$("groupForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const members = [...$("groupMembers").querySelectorAll("input:checked")].map((node) => node.value);
+  try {
+    const group = await api("/api/groups", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: $("groupName").value, members }),
+    });
+    $("groupDialog").close();
+    $("groupName").value = "";
+    await loadConversations();
+    await openConversation(conversations.find((item) => item.id === group.id));
+  } catch (error) { alert(error.message); }
+});
+
+/* ------------------------------------------------------------ attachments */
+
+$("attachButton").addEventListener("click", () => $("attachInput").click());
+
+$("attachInput").addEventListener("change", async () => {
+  const file = $("attachInput").files[0];
+  if (!file || !active) return;
+  if (file.size > 10 * 1024 * 1024) {
+    alert("Attachments are limited to 10 MB in this version.");
+    $("attachInput").value = ""; return;
+  }
+  const button = $("attachButton");
+  button.disabled = true;
+  try {
+    // The file goes into Drive encrypted for exactly this conversation, and the
+    // message carries only a reference to it.
+    active.members = await api(`/api/conversations/${encodeURIComponent(active.id)}/members`);
+    // Drive scopes and conversation kinds are not the same vocabulary.
+    const scope = active.kind === "general" ? "public"
+                : active.kind === "group" ? "group:" + active.id : "direct";
+    const fileId = [...crypto.getRandomValues(new Uint8Array(16))]
+      .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await api("/api/files", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: fileId, scope,
+        payload: await StratusCrypto.encrypt(bytes, active.members, fileId),
+        encrypted_name: await StratusCrypto.encryptText(file.name, active.members, fileId),
+      }),
+    });
+    const marker = `[Encrypted attachment: ${file.name} · Drive ID ${fileId}]`;
+    await api(`/api/conversations/${encodeURIComponent(active.id)}/messages`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ payload: await StratusCrypto.encryptText(marker, active.members, active.id) }),
+    });
+    await poll();
+  } catch (error) { alert(error.message); }
+  finally { button.disabled = false; $("attachInput").value = ""; }
+});
+
+/* -------------------------------------------------------------------- start */
+
+(async () => {
+  const stored = sessionStorage.getItem(STORE_KEY) || localStorage.getItem(STORE_KEY);
+  if (stored) {
+    try { await useKey(stored, localStorage.getItem(STORE_KEY) !== null); return; }
+    catch (error) { sessionStorage.removeItem(STORE_KEY); localStorage.removeItem(STORE_KEY); }
+  }
+  $("passphrase").focus();
+})();
+</script>
+</body>
+</html>

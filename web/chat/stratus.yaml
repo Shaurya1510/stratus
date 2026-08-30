@@ -1,0 +1,6 @@
+name: stratus-chat
+runtime: python
+start: python app.py
+port_env: PORT
+persistent_data: data
+auto_start: true

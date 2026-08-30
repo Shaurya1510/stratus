@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stratus Chat</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=v) }}">
+</head>
+<body class="auth">
+<main class="auth-card">
+  <div class="brand-mark">ST</div>
+  <h1>Stratus Chat</h1>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p>This website opens the same encrypted conversations as the Stratus terminal.</p>
+  <p class="muted">There is no username or password here on purpose. Your identity is your Linux
+    device, so Chat is opened from the terminal:</p>
+  <ol class="steps">
+    <li>Run <code>./stratus.sh terminal</code> and join your server.</li>
+    <li>Open <strong>Encrypted Chat</strong> and choose <strong>Enable Browser Access</strong> once, to
+      pick a browser passphrase.</li>
+    <li>Open <strong>Hosted Applications</strong>, select <strong>stratus-chat</strong> and press
+      <strong>Open in Browser</strong>.</li>
+  </ol>
+  <p class="muted">The link that opens is valid once and for a minute, so it is safe if someone
+    sees it over your shoulder.</p>
+</main>
+</body>
+</html>

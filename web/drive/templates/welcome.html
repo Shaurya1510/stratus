@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stratus Drive</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=v) }}">
+</head>
+<body class="auth">
+<main class="auth-card">
+  <div class="logo">ST</div>
+  <h1>Stratus Drive</h1>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p>This website opens the same encrypted files as the Stratus terminal.</p>
+  <p class="muted">Your identity is your Linux device, so Drive is opened from the terminal:</p>
+  <ol class="steps">
+    <li>Run <code>./stratus.sh terminal</code> and join your server.</li>
+    <li>Choose <strong>Browser Access</strong> once, to pick a browser passphrase.</li>
+    <li>Open <strong>Hosted Applications</strong>, select <strong>stratus-drive</strong> and press
+      <strong>Open in Browser</strong>.</li>
+  </ol>
+</main>
+</body>
+</html>

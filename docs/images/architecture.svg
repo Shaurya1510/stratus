@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 470" width="900" height="470" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <style>
+    .bg      { fill: none }
+    .card    { fill: #101526; stroke: #30395c; stroke-width: 1.5; rx: 12 }
+    .host    { fill: #0d1222; stroke: #4a3f9e; stroke-width: 2; rx: 16 }
+    .accent  { fill: #a99dff }
+    .title   { fill: #e6e9f5; font-size: 15px; font-weight: 700 }
+    .label   { fill: #d4daea; font-size: 13px; font-weight: 600 }
+    .small   { fill: #8b95b4; font-size: 11.5px }
+    .tiny    { fill: #6f7e9f; font-size: 10.5px }
+    .wire    { stroke: #4d5a83; stroke-width: 1.6; fill: none }
+    .enc     { stroke: #7ee2a8; stroke-width: 2; fill: none }
+    .greenT  { fill: #7ee2a8; font-size: 11px; font-weight: 600 }
+    .purpleT { fill: #a99dff; font-size: 11px; font-weight: 600 }
+  </style>
+
+  <rect class="bg" width="900" height="470"/>
+
+  <!-- ============================ member devices ======================== -->
+  <text x="30" y="30" class="title">Member devices</text>
+  <text x="30" y="48" class="small">hold the private key · encrypt and decrypt here</text>
+
+  <rect class="card" x="30" y="62" width="215" height="86"/>
+  <text x="46" y="88" class="label">Terminal client</text>
+  <text x="46" y="108" class="small">Textual TUI over TCP</text>
+  <text x="46" y="126" class="small">Chat · Drive · Apps</text>
+  <text x="46" y="142" class="tiny">core/interface/</text>
+
+  <rect class="card" x="30" y="166" width="215" height="86"/>
+  <text x="46" y="192" class="label">Browser client</text>
+  <text x="46" y="212" class="small">WebCrypto, same envelopes</text>
+  <text x="46" y="230" class="small">key unsealed with a passphrase</text>
+  <text x="46" y="246" class="tiny">web/chat · web/drive</text>
+
+  <!-- both encrypt before sending -->
+  <path class="enc" d="M245 105 H330"/>
+  <path class="enc" d="M245 209 H330"/>
+  <polygon points="330,105 322,101 322,109" fill="#7ee2a8"/>
+  <polygon points="330,209 322,205 322,213" fill="#7ee2a8"/>
+  <text x="252" y="98" class="greenT">ciphertext only</text>
+  <text x="252" y="202" class="greenT">ciphertext only</text>
+
+  <!-- ================================ host ============================== -->
+  <rect class="host" x="335" y="55" width="330" height="330"/>
+  <text x="355" y="82" class="title">The host computer</text>
+  <text x="355" y="100" class="small">one Linux machine + a drive you choose</text>
+
+  <rect class="card" x="355" y="114" width="290" height="66"/>
+  <text x="371" y="138" class="label">Control server</text>
+  <text x="371" y="156" class="small">length-prefixed JSON over TCP :5050</text>
+  <text x="371" y="172" class="tiny">core/server.py · membership rules only</text>
+
+  <rect class="card" x="355" y="192" width="290" height="72"/>
+  <text x="371" y="216" class="label">Encrypted store</text>
+  <text x="371" y="234" class="small">SQLite (WAL) + object files on the drive</text>
+  <text x="371" y="252" class="tiny">no plaintext · no private keys · ever</text>
+
+  <rect class="card" x="355" y="276" width="290" height="90"/>
+  <text x="371" y="300" class="label">Hosted applications</text>
+  <text x="371" y="318" class="small">static · Python · Node.js, each on its own port</text>
+  <text x="371" y="336" class="small">confined by systemd, memory + CPU capped</text>
+  <text x="371" y="354" class="tiny">core/system/deployment.py · sandbox.py</text>
+
+  <!-- ============================== shell ============================== -->
+  <text x="700" y="30" class="title">Operations</text>
+  <text x="700" y="48" class="small">2,455 lines of Bash</text>
+
+  <rect class="card" x="700" y="62" width="172" height="200"/>
+  <text x="716" y="88" class="label">stratus.sh</text>
+  <text x="716" y="112" class="small">install · doctor</text>
+  <text x="716" y="132" class="small">monitor · logs</text>
+  <text x="716" y="152" class="small">backup · netcheck</text>
+  <text x="716" y="172" class="small">service · servers</text>
+  <text x="716" y="200" class="tiny">systemd units, health</text>
+  <text x="716" y="216" class="tiny">checks, restore points,</text>
+  <text x="716" y="232" class="tiny">port and range checks</text>
+  <text x="716" y="252" class="tiny">shell/</text>
+
+  <path class="wire" d="M700 160 H665"/>
+  <polygon points="665,160 673,156 673,164" fill="#4d5a83"/>
+
+  <!-- ============================== footer ============================= -->
+  <rect class="card" x="30" y="400" width="842" height="52"/>
+  <text x="50" y="424" class="purpleT">The host is storage and delivery, not a reader.</text>
+  <text x="50" y="443" class="small">It knows who is in a conversation and when a message arrived. It cannot read one, because the key never leaves the member's device.</text>
+</svg>

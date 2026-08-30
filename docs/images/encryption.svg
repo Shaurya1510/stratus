@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" width="900" height="400" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <style>
+    .card   { fill: #101526; stroke: #30395c; stroke-width: 1.5; rx: 12 }
+    .keybox { fill: #14182b; stroke: #7ee2a8; stroke-width: 1.6; rx: 10 }
+    .hostbox{ fill: #0d1222; stroke: #4a3f9e; stroke-width: 2; rx: 12 }
+    .title  { fill: #e6e9f5; font-size: 15px; font-weight: 700 }
+    .label  { fill: #d4daea; font-size: 13px; font-weight: 600 }
+    .small  { fill: #8b95b4; font-size: 11.5px }
+    .tiny   { fill: #6f7e9f; font-size: 10.5px }
+    .mono   { fill: #a99dff; font-size: 11.5px; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace }
+    .wire   { stroke: #4d5a83; stroke-width: 1.6; fill: none }
+    .green  { stroke: #7ee2a8; stroke-width: 1.8; fill: none }
+    .greenT { fill: #7ee2a8; font-size: 11px; font-weight: 600 }
+  </style>
+
+  <text x="30" y="32" class="title">One message, encrypted once, unlocked separately for each reader</text>
+
+  <!-- plaintext -->
+  <rect class="card" x="30" y="56" width="180" height="70"/>
+  <text x="46" y="80" class="label">Your message</text>
+  <text x="46" y="100" class="small">plain text, on your</text>
+  <text x="46" y="116" class="small">device only</text>
+
+  <path class="green" d="M210 91 H278"/>
+  <polygon points="278,91 270,87 270,95" fill="#7ee2a8"/>
+  <text x="212" y="84" class="greenT">AES-256-GCM</text>
+
+  <!-- content key -->
+  <rect class="keybox" x="282" y="46" width="176" height="90"/>
+  <text x="298" y="70" class="label">Random content key</text>
+  <text x="298" y="90" class="small">new for every message</text>
+  <text x="298" y="108" class="small">never reused, never</text>
+  <text x="298" y="124" class="small">stored anywhere</text>
+
+  <!-- ciphertext to host -->
+  <path class="wire" d="M370 136 V186"/>
+  <polygon points="370,186 366,178 374,178" fill="#4d5a83"/>
+
+  <rect class="hostbox" x="255" y="190" width="230" height="76"/>
+  <text x="271" y="214" class="label">The host stores</text>
+  <text x="271" y="234" class="mono">ciphertext + envelopes{...}</text>
+  <text x="271" y="252" class="tiny">and the device ids — nothing more</text>
+
+  <!-- envelopes -->
+  <text x="530" y="52" class="title">Wrapped for each member</text>
+  <text x="530" y="70" class="small">ephemeral P-256 ECDH → HKDF-SHA256 → AES-256-GCM</text>
+
+  <rect class="card" x="530" y="84" width="340" height="46"/>
+  <text x="546" y="105" class="mono">envelopes["device-alice"]</text>
+  <text x="546" y="122" class="tiny">only Alice's private key opens this one</text>
+
+  <rect class="card" x="530" y="138" width="340" height="46"/>
+  <text x="546" y="159" class="mono">envelopes["device-bob"]</text>
+  <text x="546" y="176" class="tiny">only Bob's private key opens this one</text>
+
+  <rect class="card" x="530" y="192" width="340" height="46"/>
+  <text x="546" y="213" class="mono">envelopes["device-cara"]</text>
+  <text x="546" y="230" class="tiny">only Cara's private key opens this one</text>
+
+  <path class="green" d="M458 91 H524"/>
+  <polygon points="524,91 516,87 516,95" fill="#7ee2a8"/>
+  <path class="green" d="M470 100 Q500 100 524 158"/>
+  <path class="green" d="M470 108 Q500 130 524 212"/>
+
+  <!-- bound to -->
+  <rect class="card" x="30" y="286" width="404" height="90"/>
+  <text x="46" y="310" class="label">Each envelope is bound to its reader</text>
+  <text x="46" y="330" class="small">The recipient's device id is authenticated data on the wrap, so an</text>
+  <text x="46" y="348" class="small">envelope cannot be moved to a different person. The conversation id</text>
+  <text x="46" y="366" class="small">is authenticated data on the content, so a message cannot be replayed.</text>
+
+  <rect class="card" x="450" y="286" width="420" height="90"/>
+  <text x="466" y="310" class="label">Why P-256 and AES-GCM</text>
+  <text x="466" y="330" class="small">Browsers implement both natively in WebCrypto. The website therefore</text>
+  <text x="466" y="348" class="small">uses the same envelope format as the terminal with no hand-written</text>
+  <text x="466" y="366" class="small">cryptography — which is what lets one conversation be read from both.</text>
+</svg>

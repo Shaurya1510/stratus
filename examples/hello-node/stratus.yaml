@@ -1,0 +1,7 @@
+name: hello-node
+runtime: node
+start: node server.js
+build: echo "no build step needed for this example"
+port_env: PORT
+persistent_data: data
+auto_start: false

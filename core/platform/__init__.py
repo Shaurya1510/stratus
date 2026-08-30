@@ -1,0 +1,1 @@
+"""STRATUS platform layer."""

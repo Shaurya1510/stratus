@@ -1,0 +1,624 @@
+STRATUS — COMPLETE PROJECT VISION AND PRODUCT EXPLANATION
+======================================================================
+
+1. THE CORE IDEA
+----------------------------------------------------------------------
+
+Stratus is a Linux-only, local-network cloud and application-hosting
+platform controlled through a powerful terminal interface.
+
+It allows an ordinary Linux laptop or desktop to become a small personal,
+classroom, college, office, event, or community server. Other Linux devices on
+the same local network can discover that server, join it, communicate, exchange
+files, use applications, and—when the owner permits it—upload and host their own
+applications.
+
+Stratus does not turn an HDD or SSD into a server by itself. A storage drive
+only holds the data. The host computer supplies the CPU, RAM, operating system,
+network connection, and continuously running Stratus process. Together, the
+host computer and selected drive operate as the Stratus server.
+
+The Git repository contains only the reusable Stratus program. Every person
+who clones that code creates an independent Stratus server. Their messages,
+files, policies, identities, applications, logs, and server state stay on the
+storage device they select. Stratus does not upload that private server data
+back to GitHub or to a central Stratus company server.
+
+
+2. THE EXPERIENCE WE WANT
+----------------------------------------------------------------------
+
+Stratus should feel like a real futuristic terminal operating environment,
+not a collection of small command prompts.
+
+When the user runs:
+
+    ./stratus.sh
+
+they see a polished full-screen Stratus interface with a large CLOUD FORGE
+title, good spacing, clear panels, visible keyboard commands, mouse support,
+fast navigation, and screens that remain open while their content updates.
+
+The interface must feel continuous:
+
+* A Chat conversation remains visible after a message is sent.
+* New messages appear automatically without returning to a previous menu.
+* The composer remains ready for the next message.
+* Drive remains open after an upload, download, or refresh.
+* Escape returns exactly one level to the previous screen.
+* Arrow keys, Enter, Space, Tab, Escape, shortcuts, and mouse clicks work.
+* Long-running work displays progress instead of making the interface appear
+  frozen.
+* Errors appear as clear notifications without destroying the current screen.
+
+The desired result is similar to a modern desktop application running entirely
+inside a Linux terminal.
+
+
+3. LINUX-ONLY PRODUCT
+----------------------------------------------------------------------
+
+The initial product is intentionally built for Linux distributions such as:
+
+* Ubuntu
+* Kali Linux
+* Debian
+* Linux Mint
+* Other compatible Linux distributions
+
+Windows is not the primary target. A Windows machine may be used to develop or
+copy the repository, but Stratus hosting, discovery, resource control, drive
+selection, and terminal operation are designed for Linux.
+
+Linux is important because Stratus can use system storage information,
+mounted filesystems, process controls, executable permissions, networking
+tools, and systemd resource restrictions in a predictable way.
+
+
+4. CODE AND DATA MUST REMAIN SEPARATE
+----------------------------------------------------------------------
+
+The cloned Git repository is the Stratus engine. Server data must never be
+mixed carelessly with the program source.
+
+Code location example:
+
+    /home/shaurya/Stratus-v2
+
+Selected server storage example:
+
+    /mnt/stratus-hdd/StratusData/servers/my-server
+
+This means Stratus can be updated, replaced, recloned, or repaired without
+deleting the actual server data. It also means the user can keep Stratus's
+large data on an external HDD or SSD while keeping the program on the Linux
+system drive.
+
+Stratus never formats a drive. It only shows meaningful mounted storage
+choices and creates its own organized data folder after the owner confirms a
+selection.
+
+
+5. STORAGE-SELECTION EXPERIENCE
+----------------------------------------------------------------------
+
+The first Host screen detects meaningful mounted drives instead of displaying
+every loop device, Snap image, or tiny system partition.
+
+For each useful storage option, the interface should show:
+
+* Human-readable label
+* HDD, SSD, removable, virtual, or unknown device type when detectable
+* Filesystem type, such as ext4 or exFAT
+* Total capacity
+* Free capacity
+* Mount location
+* Device name
+* A warning when the filesystem has limitations
+
+The owner chooses the HDD, SSD, or mounted directory where the server's data
+will live. Stratus records the filesystem UUID where possible so that it can
+detect when the expected external drive is missing or the wrong drive is
+mounted at that location.
+
+Python virtual environments and other files that require Linux permissions or
+symbolic links remain on a native Linux filesystem when the selected storage is
+exFAT. Persistent app source, user data, encrypted objects, logs, and server
+records can remain on the external drive.
+
+
+6. HOSTING A SERVER
+----------------------------------------------------------------------
+
+The Host flow asks for:
+
+* Server name
+* Storage location
+* Optional join token
+* Initial hosting policy
+
+The join token is like the classroom/server password. Leaving it blank creates
+an open local-network server. Entering a token means joining devices must enter
+the exact token before accessing the dashboard.
+
+Starting a server launches the Stratus control service on the host computer.
+When a graphical Linux terminal is available, Stratus should automatically
+open a second terminal window containing the full Host Dashboard. The original
+process remains responsible for the running server and its lifetime.
+
+The large Host Dashboard should place the main controls into two clear panels.
+
+HOSTING CONTROL PANEL
+
+* Detected CPU thread count
+* Detected RAM
+* Recommended safety preset
+* Hosting preset selector
+* Custom policy editor
+* Enable or disable guest application hosting
+* Start or enter the server workspace
+
+SERVER OVERVIEW PANEL
+
+* Connected devices
+* Deployment approvals
+* All running applications
+* Full server policy
+* Server status
+* Exit dashboard
+
+The host is also a normal member of their server. Starting or entering the
+workspace opens the same member features available to joined clients while
+preserving the host's separate administrative powers.
+
+
+7. HARDWARE-AWARE HOSTING POLICIES
+----------------------------------------------------------------------
+
+Guest application hosting must never be unlimited by default. Stratus
+detects the host's available CPU threads and RAM and recommends a sensible
+starting policy.
+
+LOW PRESET
+
+Designed for weak devices, older laptops, battery-sensitive hosting, or a host
+that wants maximum safety. It permits fewer apps and gives each application a
+small CPU, RAM, upload, and persistent-data allowance.
+
+MEDIUM PRESET
+
+The recommended balanced classroom setting for ordinary laptops. It permits a
+small number of apps per device, requires host approval, and places practical
+limits on memory, CPU, uploads, persistent data, and inactivity.
+
+HIGH PRESET
+
+Designed for powerful computers and trusted environments. It permits more apps
+and larger resource allocations. It must still have boundaries and must never
+silently consume the entire host device.
+
+CUSTOM POLICY
+
+Custom starts from a safe baseline. The host can increase or decrease:
+
+* Maximum apps per joined device
+* Maximum deployment upload size
+* Maximum persistent data per application
+* Maximum total guest storage
+* Memory per application
+* CPU percentage per application
+* Allowed runtimes
+* Inactivity timeout
+* Whether approval is required
+* Whether guest hosting is enabled
+
+The interface should explain how a custom value compares with the detected
+hardware. Unsafe values should produce a clear warning. Stratus should never
+pretend that disk capacity equals computing capacity: CPU and RAM limits come
+from the host computer, while storage limits come from the selected drive.
+
+
+8. JOINING A SERVER
+----------------------------------------------------------------------
+
+A client chooses Join a Server. Stratus searches the local network and shows
+nearby running Stratus servers by name and IP address. The user can select a
+discovered server with the keyboard or mouse. Manual IP entry remains available
+when discovery is blocked by a firewall or network configuration.
+
+Stratus immediately validates the join token before opening the main member
+dashboard. An incorrect token produces one useful error and returns the user to
+the join flow. It must not repeatedly open feature menus and fail every time the
+user clicks an option.
+
+The user's Stratus identity is derived from their Linux device and a locally
+generated stable identity. Its visible name resembles:
+
+    linux-user@computer-hostname
+
+There is no ordinary email/password account-registration flow. The device has a
+stable random ID, device secret, and encryption key pair stored locally. The
+server sees the public identity required for membership and encryption, but the
+private encryption key never leaves the client device.
+
+
+9. MAIN MEMBER DASHBOARD
+----------------------------------------------------------------------
+
+After joining, the full-screen member workspace displays a large Stratus
+title and two organized panels.
+
+COMMUNICATE AND SHARE
+
+1. Encrypted Chat
+2. Encrypted Drive
+3. Server Members
+
+APPLICATION CLOUD
+
+1. Hosted Applications
+2. Deploy an Application
+3. My Hosted Apps
+4. Disconnect
+
+Hosted Applications means all applications available through the selected
+Stratus server, including built-in applications and permitted guest apps.
+
+My Hosted Apps means the applications uploaded by the current device. It allows
+the owner of those deployments to see their state, address, port, logs, resource
+use, and controls such as start, stop, and restart.
+
+Server Members shows the devices currently registered or connected, using their
+Linux device names rather than requiring Stratus social accounts.
+
+
+10. PERSISTENT ENCRYPTED CHAT
+----------------------------------------------------------------------
+
+Chat must be a real continuous terminal conversation experience.
+
+The Chat screen contains:
+
+* Conversation sidebar
+* General Chat
+* Direct Messages
+* Group Chats
+* Create Group
+* Conversation title
+* Scrollable message history
+* Sender name and timestamp
+* Persistent composer at the bottom
+* Send button
+* Visible shortcut help
+
+When General Chat is opened, it stays open. The user types a message and presses
+Enter. The message appears in the history, the composer clears, and focus
+returns to the composer. The interface does not throw the user back to the Chat
+menu. It polls efficiently for new messages so messages from other devices
+appear automatically.
+
+Escape returns to the previous screen. Ctrl+N can begin a new direct message.
+Mouse clicks can select conversations and buttons.
+
+DIRECT MESSAGES
+
+The user selects another connected device by its visible Linux name. Stratus
+opens a private conversation encrypted for exactly those two devices.
+
+GROUP CHAT
+
+The user opens an existing group or creates a new one. The group-creation modal
+accepts a name and provides a keyboard/mouse multi-selection list of server
+members. Group messages are encrypted only for group members.
+
+GENERAL CHAT
+
+General is visible to current authorized server members. Messages are still
+encrypted before reaching the host's database.
+
+CHAT ATTACHMENTS
+
+Inside a conversation, the user can enter:
+
+    /file /home/user/Documents/example.pdf
+
+Stratus encrypts the file for the same conversation members, places it into
+Encrypted Drive, and sends an encrypted attachment reference in Chat.
+
+
+11. ENCRYPTED DRIVE
+----------------------------------------------------------------------
+
+Encrypted Drive is both private storage and a secure sharing space.
+
+It supports:
+
+* Private files belonging only to the current device
+* Public files shared with server members
+* Direct file sharing with one selected person
+* Group file spaces
+* Encrypted logical folder names
+* Upload
+* Download
+* Rename
+* Search
+* Delete
+* Refresh
+
+The terminal screen provides a file table containing the decrypted filename for
+authorized users, owner, scope, and object ID. A file can be dragged from the
+Linux file manager into the terminal path field. Terminal drag and drop normally
+pastes the local path; Stratus reads that path after the user chooses the
+destination.
+
+The screen remains open after operations and refreshes its table. Errors appear
+as notifications without returning to the dashboard.
+
+
+12. END-TO-END ENCRYPTION MODEL
+----------------------------------------------------------------------
+
+Terminal Chat messages and terminal Drive objects are encrypted on the sending
+device and decrypted on authorized receiving devices.
+
+For each message or file:
+
+1. The client creates a random content-encryption key.
+2. Content is encrypted using authenticated ChaCha20-Poly1305 encryption.
+3. The content key is wrapped separately for each authorized recipient using
+   X25519 key agreement and HKDF.
+4. The server receives encrypted content and recipient envelopes.
+5. The server verifies that envelope membership matches the conversation or
+   sharing scope.
+6. Only a device possessing an authorized private key can decrypt the content.
+
+The host can still see operational metadata such as device IDs, timestamps,
+encrypted-object sizes, application information, and connection activity. The
+host can delete, block, withhold, or corrupt stored ciphertext. End-to-end
+encryption protects content confidentiality; it does not make the host incapable
+of disrupting the service.
+
+This system is an envelope-encryption MVP. It is not yet the Signal Double
+Ratchet or Messaging Layer Security, so it does not claim the full forward
+secrecy and post-compromise properties of those mature protocols.
+
+The built-in browser demonstration apps are not currently equivalent to the
+terminal E2EE clients. Sensitive communication should use the terminal features
+until a separately verified browser security design exists.
+
+
+13. BUILT-IN APPLICATIONS
+----------------------------------------------------------------------
+
+Every new Stratus server installs two built-in applications:
+
+* Stratus Chat
+* Stratus Drive
+
+They demonstrate that the Stratus application-hosting layer works and provide
+optional browser access. The terminal Chat and Drive experience is the primary
+secure local-network experience.
+
+Built-in apps appear in the server's application list just like running apps,
+but they are owned by the Stratus system rather than by a guest device.
+
+
+14. HOSTING USER APPLICATIONS
+----------------------------------------------------------------------
+
+When guest hosting is enabled, a joined member can deploy an application from
+the terminal dashboard.
+
+The deployment window accepts a local project-folder path. The user can paste
+the path or drag the folder into the terminal. The project must contain a
+stratus.yaml manifest describing its name, runtime, start command, and
+optional auto-start behavior.
+
+Initial supported runtimes:
+
+* Static web applications
+* Python applications
+
+Stratus safely bundles and uploads the project, checks archive paths, checks
+the runtime, enforces the host policy, assigns a port, creates the application's
+persistent-data area, prepares its runtime, and either deploys it or places it
+into the host's approval queue.
+
+The host sees who submitted the app, its name, runtime, and upload size. The host
+can approve or deny it. When approved, the application becomes visible under
+Hosted Applications with a LAN address such as:
+
+    http://192.168.1.2:8002
+
+Application source must be visible to the host because the host computer must
+execute it. Guest app source is not protected by terminal Chat/Drive E2EE.
+
+
+15. APPLICATION STORAGE STRUCTURE
+----------------------------------------------------------------------
+
+Each server has a predictable, inspectable structure similar to:
+
+    StratusData/
+      servers/
+        <server-slug>/
+          config/
+          platform/
+          users/
+            <device-id>/
+              profile/
+              drive/
+              received/
+              exports/
+              deployments/
+          chat/
+          drive/
+          deployments/
+            <deployment-id>/
+              source/
+              build.log
+              runtime.log
+          app-data/
+            <deployment-id>/
+          uploads/
+          logs/
+          backups/
+
+Logical user ownership is represented by stable device IDs so duplicate laptop
+names do not overwrite one another. Human-readable device names remain visible
+in the interface.
+
+Each hosted application gets its own source directory and persistent-data
+directory. Applications can create their own user-level structures within their
+assigned data space, but one application must not write into another
+application's space.
+
+
+16. SPEED AND RESPONSIVENESS
+----------------------------------------------------------------------
+
+Stratus should feel extremely fast even on an ordinary classroom laptop.
+The design achieves this through:
+
+* Local-network communication rather than internet round trips
+* Small framed requests instead of full page reloads
+* Persistent terminal screens instead of restarting menus
+* Incremental Chat polling that requests only messages newer than the last ID
+* Lightweight SQLite metadata storage
+* Background application processes
+* Reused device identities and encryption keys
+* Small targeted UI updates
+* Separate persistent data and regenerable runtime files
+* Clear upload and resource limits
+
+Future performance work should include event-driven push updates, connection
+reuse, background transfer workers, resumable large-file uploads, paginated
+history, lazy loading, and application health monitoring. The interface should
+remain interactive while encryption, compression, installation, or deployment
+work happens in the background.
+
+
+17. CLASSROOM AND LOCAL-NETWORK RANGE
+----------------------------------------------------------------------
+
+Stratus does not assign a physical radio range. Its practical range is the
+range and topology of the Wi-Fi router, access point, Ethernet network, or local
+hotspot being used.
+
+In a lecture hall, the goal is for approximately 200 students on the same LAN to
+discover and join the host. Actual capacity depends on:
+
+* Access-point quality
+* Signal strength and interference
+* Whether client isolation is enabled
+* Host CPU and RAM
+* Host network adapter
+* Number and size of file transfers
+* Number and complexity of hosted applications
+
+A distance such as 50–70 metres is a property of the networking equipment and
+building, not a number Stratus can guarantee in software. Stratus should
+report network reachability and server load rather than promise a false physical
+distance.
+
+
+18. SECURITY AND SAFETY BOUNDARIES
+----------------------------------------------------------------------
+
+Stratus is currently a trusted classroom/LAN platform, not a production
+multi-tenant cloud for arbitrary hostile code.
+
+Important protections include:
+
+* Join-token verification
+* Stable per-device identities
+* Public-key pinning and changed-key warnings
+* End-to-end encrypted terminal content
+* Guest hosting disabled unless the owner enables it
+* Optional mandatory deployment approval
+* Per-device application count
+* Upload and data quotas
+* Allowed-runtime checks
+* Safe archive extraction
+* Non-root application processes
+* CPU and RAM limits through systemd when available
+* Isolated application directories
+* External-drive identity validation
+
+Future production-grade arbitrary-code hosting requires stronger isolation such
+as rootless containers, namespaces, seccomp, cgroups, read-only filesystems,
+network policies, vulnerability scanning, audit logs, rate limits, backups,
+signed releases, and a carefully designed update process.
+
+
+19. TERMINAL NAVIGATION STANDARD
+----------------------------------------------------------------------
+
+The interface should consistently teach and support:
+
+    Arrow keys       Move selection
+    Tab / Shift+Tab  Change focused control
+    Enter            Open, submit, or send
+    Space            Toggle selected member/option
+    Escape           Go back one screen
+    Ctrl+N           Start a new direct Chat
+    R                Refresh where appropriate
+    Q                 Exit a host dashboard when safe
+    Mouse click      Select buttons, rows, and menu items
+    Mouse wheel      Scroll histories and tables
+
+Commands must remain visible in the footer or contextual help. A user should not
+need to memorize hidden controls.
+
+
+20. CURRENT IMPLEMENTATION STATUS
+----------------------------------------------------------------------
+
+The current Stratus v2 implementation includes:
+
+* Linux first-run Host/Join workflow
+* Meaningful mounted-storage selection
+* External HDD/SSD server-data support
+* Separate code and server data
+* LAN discovery and manual IP fallback
+* Join-token validation before dashboard entry
+* Persistent device identities
+* Terminal end-to-end encryption
+* General, direct, and group Chat foundations
+* Persistent full-screen Chat with automatic updates
+* Encrypted Chat attachments
+* Encrypted Drive upload, listing, download, and deletion foundations
+* Static and Python application deployment
+* Deployment policies and approvals
+* Low, Medium, High, and Custom hosting controls
+* Hardware-aware preset recommendation
+* Built-in Chat and Drive applications
+* Large two-panel Host and Member terminal dashboards
+* Keyboard and mouse navigation
+* Separate terminal host dashboard launch on supported Linux desktops
+
+Automated tests verify encryption behavior, fingerprints, private-key handling,
+policy defaults, manifest validation, encrypted Chat/Drive server round trips,
+and successful mounting of both the Host and Client terminal interfaces.
+
+
+21. FINAL PRODUCT VISION
+----------------------------------------------------------------------
+
+The final Stratus should let someone clone one Linux project, run one command,
+choose a drive, name a server, and instantly create a private local cloud.
+
+People nearby should be able to discover it, identify themselves through their
+own Linux devices, join with a token, chat continuously, exchange encrypted
+files, use built-in tools, open hosted web applications, and submit their own
+projects when the owner allows it.
+
+The host remains in control of storage, CPU, RAM, app limits, approvals, and
+membership. Private terminal Chat and Drive content remains encrypted for its
+intended devices. GitHub distributes the engine, while each server remains
+independent and keeps its own data locally.
+
+Most importantly, Stratus should feel fast, alive, understandable, and
+powerful: a complete local cloud platform operating from a beautiful Linux
+terminal rather than a confusing pile of commands.
+

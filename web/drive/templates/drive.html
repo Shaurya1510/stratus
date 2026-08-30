@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Stratus Drive</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=v) }}">
+</head>
+<body>
+
+<div id="lock" class="lock">
+  <div class="lock-card">
+    <div class="logo">ST</div>
+    <h1>Unlock your files</h1>
+    <p>You are signed in as <strong>{{ device.display_name }}</strong>, but your filenames
+      and file contents are still encrypted.</p>
+    <p class="muted">Enter the browser passphrase you chose in the Stratus terminal under
+      <strong>Browser Access</strong>. It is checked here on this device and never sent to
+      the server.</p>
+    <form id="unlockForm">
+      <label>Browser passphrase<input type="password" id="passphrase" autocomplete="current-password" required></label>
+      <label class="checkbox"><input type="checkbox" id="remember"> Stay unlocked on this browser
+        <small>Leave this off on a shared computer.</small></label>
+      <div class="error" id="lockError" hidden></div>
+      <button type="submit" id="unlockButton">Unlock</button>
+    </form>
+    <p class="muted lock-help">Forgotten it? Open Browser Access in the terminal and set a new
+      one — nothing is lost.</p>
+    <form action="/logout" method="post" class="signout">
+      <button type="submit" class="linkish">Not {{ device.display_name }}? Sign out</button>
+    </form>
+  </div>
+</div>
+
+<div id="app" hidden>
+<header>
+  <div class="brand"><span>ST</span><div><b>Stratus</b><small>Drive</small></div></div>
+  <div class="account">{{ device.display_name }}
+    <button type="button" class="linkish" id="lockAgain">Lock</button>
+    <form action="/logout" method="post"><button type="submit">Sign out</button></form>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <button type="button" class="upload-button" id="pickFile">＋ Upload file</button>
+    <input hidden id="fileInput" type="file">
+
+    <label class="scope">Share with
+      <select id="scope">
+        <option value="private">Only me</option>
+        <option value="public">Everyone on this server</option>
+        <option value="direct">One person…</option>
+        <option value="group">A group…</option>
+      </select>
+    </label>
+
+    <!-- Shown only for the scopes that need a target, with a way to make a new
+         group without leaving the page. -->
+    <div class="target-row" id="targetRow" hidden>
+      <select id="target"></select>
+      <button type="button" id="newGroup" hidden>＋ New</button>
+    </div>
+
+    <nav class="views">
+      <div class="views-title">Files</div>
+      <div id="viewList"></div>
+    </nav>
+
+    <div class="note">Files are encrypted in this browser before they leave your device.
+      The limit is 10 MB per file.</div>
+  </aside>
+
+  <section>
+    <div class="top">
+      <div>
+        <h1 id="viewTitle">All files</h1>
+        <p class="muted" id="viewSubtitle"></p>
+      </div>
+      <label class="search">⌕ <input id="search" placeholder="Search filenames"></label>
+    </div>
+    <div class="table">
+      <div class="row heading">
+        <span>Name</span><span>Owner</span><span>Shared with</span><span>Size</span><span></span>
+      </div>
+      <div id="rows"></div>
+    </div>
+  </section>
+</main>
+</div>
+
+<dialog id="groupDialog">
+  <form id="groupForm">
+    <h2>Create a group space</h2>
+    <p class="muted">Files shared to a group are encrypted for its members only.</p>
+    <input type="text" id="groupName" placeholder="Group name" maxlength="60" required>
+    <div id="groupMembers" class="member-list"></div>
+    <div class="error" id="groupError" hidden></div>
+    <div class="dialog-buttons">
+      <button type="button" id="groupCancel">Cancel</button>
+      <button type="submit">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="{{ url_for('static', filename='stratus-crypto.js', v=v) }}"></script>
+<script>
+const DEVICE_ID = {{ device.id | tojson }};
+const STORE_KEY = "stratus.key." + DEVICE_ID;
+const MAX_BYTES = 10 * 1024 * 1024;
+
+let privateKey = null;
+let files = [];
+let groups = [];
+let people = [];
+let view = { kind: "all" };          // which slice of the drive is on screen
+const names = new Map();             // file id -> decrypted name
+
+const $ = (id) => document.getElementById(id);
+// Escapes quotes as well as angle brackets: several of these values are put
+// inside HTML attributes, where a bare " would end the attribute and let the
+// rest of the value become markup.
+const esc = (text) => String(text ?? "")
+  .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+  .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+const humanSize = (value) => {
+  let number = Number(value || 0);
+  for (const unit of ["B", "KB", "MB", "GB"]) {
+    if (number < 1024) return `${unit === "B" ? number : number.toFixed(1)} ${unit}`;
+    number /= 1024;
+  }
+  return `${number.toFixed(1)} TB`;
+};
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.error || ("Request failed: " + response.status));
+  }
+  return response.json();
+}
+
+/* ---------------------------------------------------------------- unlocking */
+
+async function useKey(pkcs8, remember) {
+  privateKey = await StratusCrypto.importPrivateKey(pkcs8);
+  try { (remember ? localStorage : sessionStorage).setItem(STORE_KEY, pkcs8); } catch (error) { /* private mode */ }
+  $("lock").hidden = true;
+  $("app").hidden = false;
+  await loadDirectory();
+  await refresh();
+  setInterval(refresh, 5000);
+}
+
+$("unlockForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("unlockButton");
+  button.disabled = true; button.textContent = "Unlocking…";
+  $("lockError").hidden = true;
+  try {
+    const blob = await api("/api/keyblob");
+    const pkcs8 = await StratusCrypto.unsealDeviceKey(blob, $("passphrase").value, DEVICE_ID);
+    await useKey(pkcs8, $("remember").checked);
+  } catch (error) {
+    $("lockError").textContent = (error.message || "").includes("operation-specific")
+      ? "That passphrase does not open this key." : (error.message || "That passphrase did not work.");
+    $("lockError").hidden = false;
+  } finally { button.disabled = false; button.textContent = "Unlock"; }
+});
+
+$("lockAgain").addEventListener("click", () => {
+  sessionStorage.removeItem(STORE_KEY); localStorage.removeItem(STORE_KEY); location.reload();
+});
+
+/* ------------------------------------------------------- people and groups */
+
+async function loadDirectory() {
+  const [everyone, myGroups] = await Promise.all([api("/api/recipients"), api("/api/groups")]);
+  people = everyone.filter((item) => item.id !== DEVICE_ID);
+  groups = myGroups;
+  updateTarget();
+}
+
+/* ------------------------------------------------------------------- views */
+
+function groupIdOf(item) {
+  return String(item.scope).startsWith("group:") ? String(item.scope).slice(6) : null;
+}
+
+// Who a direct share is with: the envelope names exactly two devices, and one
+// of them is us.
+function partnerOf(item) {
+  const ids = Object.keys((item.payload && item.payload.envelopes) || {});
+  return ids.find((id) => id !== DEVICE_ID) || null;
+}
+
+function inView(item, current) {
+  switch (current.kind) {
+    case "all": return true;
+    case "private": return item.scope === "private";
+    case "public": return item.scope === "public";
+    case "direct": return item.scope === "direct" && (!current.id || partnerOf(item) === current.id);
+    case "group": return groupIdOf(item) === current.id;
+    default: return true;
+  }
+}
+
+function personName(deviceId) {
+  const found = people.find((item) => item.id === deviceId);
+  return found ? found.display_name : "unknown device";
+}
+
+function countIn(current) {
+  return files.filter((item) => inView(item, current)).length;
+}
+
+function renderViews() {
+  const entries = [
+    { kind: "all", mark: "▤", label: "All files" },
+    { kind: "private", mark: "◆", label: "Only me" },
+    { kind: "public", mark: "◎", label: "Everyone" },
+    { kind: "direct", mark: "@", label: "Shared with a person" },
+  ];
+
+  // One entry per person who actually has a direct share with us, so the list
+  // stays short instead of naming every member of the server.
+  const partners = [...new Set(files.filter((item) => item.scope === "direct")
+    .map(partnerOf).filter(Boolean))];
+
+  let html = entries.map((entry) => {
+    const active = view.kind === entry.kind && !view.id;
+    return `<button type="button" class="view ${active ? "active" : ""}" data-kind="${entry.kind}">
+      <span class="mark">${entry.mark}</span>${entry.label}
+      <span class="count">${countIn({ kind: entry.kind })}</span></button>`;
+  }).join("");
+
+  html += partners.map((deviceId) => {
+    const active = view.kind === "direct" && view.id === deviceId;
+    return `<button type="button" class="view ${active ? "active" : ""}" data-kind="direct" data-id="${esc(deviceId)}"
+      style="padding-left:26px">
+      <span class="mark">·</span>${esc(personName(deviceId))}
+      <span class="count">${countIn({ kind: "direct", id: deviceId })}</span></button>`;
+  }).join("");
+
+  if (groups.length) {
+    html += `<div class="views-title">Group spaces</div>`;
+    html += groups.map((group) => {
+      const active = view.kind === "group" && view.id === group.id;
+      return `<button type="button" class="view ${active ? "active" : ""}" data-kind="group" data-id="${esc(group.id)}">
+        <span class="mark">#</span>${esc(group.name)}
+        <span class="count">${countIn({ kind: "group", id: group.id })}</span></button>`;
+    }).join("");
+  }
+
+  $("viewList").innerHTML = html;
+  $("viewList").querySelectorAll(".view").forEach((node) => {
+    node.addEventListener("click", () => {
+      view = { kind: node.dataset.kind };
+      if (node.dataset.id) view.id = node.dataset.id;
+      render();
+    });
+  });
+}
+
+function viewHeading() {
+  switch (view.kind) {
+    case "private": return ["Only me", "Encrypted for this device alone. Nobody else can open these."];
+    case "public": return ["Everyone on this server", "Shared with every member."];
+    case "direct": return view.id
+      ? [personName(view.id), "Shared privately between the two of you."]
+      : ["Shared with a person", "Files exchanged privately with one member."];
+    case "group": {
+      const group = groups.find((item) => item.id === view.id);
+      return [group ? group.name : "Group space", "Encrypted for the members of this group."];
+    }
+    default: return ["All files", "Everything on this server you are able to open."];
+  }
+}
+
+/* -------------------------------------------------------------------- files */
+
+async function refresh() {
+  if (!privateKey) return;
+  try { files = await api("/api/files"); } catch (error) { return; }
+  for (const item of files) {
+    if (names.has(item.id)) continue;
+    try {
+      names.set(item.id, await StratusCrypto.decryptText(item.encrypted_name, privateKey, DEVICE_ID, item.id));
+    } catch (error) { names.set(item.id, null); }
+  }
+  render();
+}
+
+function scopeLabel(item) {
+  const groupId = groupIdOf(item);
+  if (groupId) {
+    const group = groups.find((entry) => entry.id === groupId);
+    return group ? `# ${group.name}` : "a group";
+  }
+  if (item.scope === "direct") {
+    const partner = partnerOf(item);
+    return partner ? `@ ${personName(partner)}` : "one person";
+  }
+  return { private: "only me", public: "server members" }[item.scope] || item.scope;
+}
+
+function render() {
+  renderViews();
+  const [title, subtitle] = viewHeading();
+  $("viewTitle").textContent = title;
+
+  const needle = $("search").value.trim().toLowerCase();
+  const visible = files.filter((item) => {
+    if (!inView(item, view)) return false;
+    const name = names.get(item.id);
+    return !needle || (name && name.toLowerCase().includes(needle));
+  });
+
+  $("viewSubtitle").textContent =
+    `${visible.length} file${visible.length === 1 ? "" : "s"} · ${subtitle}`;
+
+  $("rows").innerHTML = visible.map((item) => {
+    const name = names.get(item.id);
+    const label = name === null
+      ? `<i class="undecryptable">encrypted for other devices</i>` : esc(name);
+    const mine = item.owner_device_id === DEVICE_ID;
+    return `<div class="row item">
+      <span class="name"><i>▤</i>${label}</span>
+      <span>${esc(item.owner_name || "")}</span>
+      <span>${esc(scopeLabel(item))}</span>
+      <span>${humanSize(item.ciphertext_bytes)}</span>
+      <span class="actions">
+        ${name === null ? "" : `<button type="button" data-download="${item.id}">Download</button>`}
+        ${mine ? `<button type="button" data-delete="${item.id}">Delete</button>` : ""}
+      </span></div>`;
+  }).join("") || `<div class="empty"><strong>Nothing here yet</strong>
+      <p>${needle ? "No filenames match that search." : "Upload a file, or send one from the terminal."}</p></div>`;
+
+  $("rows").querySelectorAll("[data-download]").forEach((node) =>
+    node.addEventListener("click", () => download(node.dataset.download)));
+  $("rows").querySelectorAll("[data-delete]").forEach((node) =>
+    node.addEventListener("click", () => remove(node.dataset.delete)));
+}
+
+$("search").addEventListener("input", render);
+
+async function download(fileId) {
+  try {
+    const item = await api(`/api/files/${fileId}`);
+    const bytes = await StratusCrypto.decrypt(item.payload, privateKey, DEVICE_ID, fileId);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([bytes]));
+    link.download = (names.get(fileId) || "download.bin").split("/").pop();
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  } catch (error) { alert("Could not download: " + error.message); }
+}
+
+async function remove(fileId) {
+  if (!confirm("Permanently delete this file?")) return;
+  try {
+    await api(`/api/files/${fileId}/delete`, { method: "POST" });
+    names.delete(fileId);
+    await refresh();
+  } catch (error) { alert(error.message); }
+}
+
+/* ------------------------------------------------------------------ sharing */
+
+function updateTarget() {
+  const scope = $("scope").value;
+  const row = $("targetRow");
+  const target = $("target");
+  const newGroup = $("newGroup");
+
+  if (scope === "direct") {
+    row.hidden = false;
+    newGroup.hidden = true;
+    target.innerHTML = people.length
+      ? people.map((item) => `<option value="${esc(item.id)}">${esc(item.display_name)}</option>`).join("")
+      : `<option value="">No other devices have joined</option>`;
+  } else if (scope === "group") {
+    row.hidden = false;
+    newGroup.hidden = false;              // always offer to make one
+    target.innerHTML = groups.length
+      ? groups.map((item) => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("")
+      : `<option value="">No groups yet — create one</option>`;
+  } else {
+    row.hidden = true;
+  }
+}
+
+$("scope").addEventListener("change", updateTarget);
+
+/* ------------------------------------------------------------ create group */
+
+$("newGroup").addEventListener("click", () => {
+  $("groupError").hidden = true;
+  $("groupName").value = "";
+  $("groupMembers").innerHTML = people.length
+    ? people.map((item) =>
+        `<label><input type="checkbox" value="${esc(item.id)}"> ${esc(item.display_name)}</label>`).join("")
+    : `<p class="muted">No other devices have joined this server yet. You can still create the
+        group and add files now.</p>`;
+  $("groupDialog").showModal();
+});
+
+$("groupCancel").addEventListener("click", () => $("groupDialog").close());
+
+$("groupForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const members = [...$("groupMembers").querySelectorAll("input:checked")].map((node) => node.value);
+  try {
+    const group = await api("/api/groups", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: $("groupName").value, members }),
+    });
+    $("groupDialog").close();
+    await loadDirectory();
+    $("scope").value = "group";
+    updateTarget();
+    $("target").value = group.id;         // select the group just created
+    render();
+  } catch (error) {
+    $("groupError").textContent = error.message;
+    $("groupError").hidden = false;
+  }
+});
+
+/* ------------------------------------------------------------------ upload */
+
+$("pickFile").addEventListener("click", () => $("fileInput").click());
+
+$("fileInput").addEventListener("change", async () => {
+  const file = $("fileInput").files[0];
+  if (!file) return;
+  if (file.size > MAX_BYTES) { alert("Encrypted uploads are limited to 10 MB in this version."); return; }
+
+  const scope = $("scope").value;
+  const target = $("target").value;
+  if ((scope === "direct" || scope === "group") && !target) {
+    alert(scope === "direct"
+      ? "No other devices have joined yet, so there is nobody to share with."
+      : "Create a group first, using the + New button.");
+    $("fileInput").value = ""; return;
+  }
+
+  const button = $("pickFile");
+  button.disabled = true; button.textContent = "Encrypting…";
+  try {
+    let recipients, storedScope = scope;
+    const everyone = await api("/api/recipients");
+    if (scope === "private") recipients = everyone.filter((item) => item.id === DEVICE_ID);
+    else if (scope === "public") recipients = everyone;
+    else if (scope === "direct") recipients = everyone.filter((item) => item.id === DEVICE_ID || item.id === target);
+    else {
+      recipients = await api(`/api/groups/${target}/recipients`);
+      storedScope = "group:" + target;
+    }
+
+    const fileId = [...crypto.getRandomValues(new Uint8Array(16))]
+      .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const payload = await StratusCrypto.encrypt(bytes, recipients, fileId);
+    const encryptedName = await StratusCrypto.encryptText(file.name, recipients, fileId);
+    await api("/api/files", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: fileId, scope: storedScope, payload, encrypted_name: encryptedName }),
+    });
+
+    // Show the file where it landed, so the upload is visibly confirmed.
+    view = scope === "group" ? { kind: "group", id: target }
+         : scope === "direct" ? { kind: "direct", id: target }
+         : { kind: scope };
+    await refresh();
+  } catch (error) { alert(error.message); }
+  finally { button.disabled = false; button.textContent = "＋ Upload file"; $("fileInput").value = ""; }
+});
+
+/* -------------------------------------------------------------------- start */
+
+(async () => {
+  const stored = sessionStorage.getItem(STORE_KEY) || localStorage.getItem(STORE_KEY);
+  if (stored) {
+    try { await useKey(stored, localStorage.getItem(STORE_KEY) !== null); return; }
+    catch (error) { sessionStorage.removeItem(STORE_KEY); localStorage.removeItem(STORE_KEY); }
+  }
+  $("passphrase").focus();
+})();
+</script>
+</body>
+</html>
