@@ -6,7 +6,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20only-1d1740?style=flat-square">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-4a3f9e?style=flat-square">
   <img alt="Bash" src="https://img.shields.io/badge/bash-2%2C455%20lines-2d6a4f?style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-194%20passing-2d6a4f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-202%20passing-2d6a4f?style=flat-square">
   <img alt="Encryption" src="https://img.shields.io/badge/encryption-end--to--end-7ee2a8?style=flat-square">
 </p>
 
@@ -91,13 +91,39 @@ the terminal interface:
 pip3 install --user -r requirements.txt
 ```
 
-**Optional but recommended:**
+**Optional but recommended.** `./stratus.sh install` offers to install these
+for you; you can also do it by hand:
+
+```bash
+sudo apt install -y nodejs npm ufw
+```
 
 - **`nodejs` + `npm`** — only if you want to host Node.js projects
+- **`ufw`** — lets Stratus open firewall ports for hosted apps automatically
 - **`systemd` with lingering enabled** — this is what confines uploaded
   applications so they cannot read your files. Turn it on with
   `sudo loginctl enable-linger $USER`. Without it, Stratus **refuses** to run
   guest applications rather than running them unprotected.
+
+<details>
+<summary><b>If the Python environment fails with <code>No module named 'pip'</code></b></summary>
+
+Debian, Kali and Ubuntu package Python's `ensurepip` separately from `venv`, so
+a virtual environment can be created successfully and still contain no pip.
+`./stratus.sh install` detects this and rebuilds the environment, but if it
+tells you `ensurepip` itself is missing, install it:
+
+```bash
+sudo apt install -y python3-venv python3-pip
+```
+
+On some releases the package is tied to a specific Python version. Find it with:
+
+```bash
+apt search '^python3.*-venv$'
+```
+
+</details>
 
 ### 3. Start it
 
@@ -282,7 +308,7 @@ core/                   The platform
 web/                    The two built-in websites
   ├── chat/             Flask + WebCrypto
   └── drive/            Flask + WebCrypto
-tests/                  194 tests
+tests/                  202 tests
 docs/                   Guide, architecture, hosting, security, testing
 examples/               Two ready-to-deploy sample projects
 ```
@@ -309,7 +335,7 @@ Every folder has its own `README.md` explaining what lives there and why.
 ./stratus.sh test
 ```
 
-194 tests covering the encryption (including **Python ↔ JavaScript interop**,
+202 tests covering the encryption (including **Python ↔ JavaScript interop**,
 proved by running the real browser crypto under Node), the membership rules,
 the wire protocol, archive safety, the sandbox, drive discovery, the terminal
 interface, and every security fix listed above.
