@@ -63,6 +63,7 @@ shell/                  THE SHELL LAYER — installation and operations
   netcheck.sh           Check the network, open firewall ports
   service.sh            Run Stratus at boot via systemd
   servers.sh            List servers, scan a drive, remove or delete one
+  stop.sh               Stop a running server and everything it hosts
 
 core/                   THE PLATFORM — Python
   server.py             The host: listens, authenticates, dispatches

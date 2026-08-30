@@ -63,14 +63,14 @@
 
   <!-- ============================== shell ============================== -->
   <text x="700" y="30" class="title">Operations</text>
-  <text x="700" y="48" class="small">2,455 lines of Bash</text>
+  <text x="700" y="48" class="small">2,767 lines of Bash</text>
 
   <rect class="card" x="700" y="62" width="172" height="200"/>
   <text x="716" y="88" class="label">stratus.sh</text>
   <text x="716" y="112" class="small">install · doctor</text>
   <text x="716" y="132" class="small">monitor · logs</text>
   <text x="716" y="152" class="small">backup · netcheck</text>
-  <text x="716" y="172" class="small">service · servers</text>
+  <text x="716" y="172" class="small">service · servers · stop</text>
   <text x="716" y="200" class="tiny">systemd units, health</text>
   <text x="716" y="216" class="tiny">checks, restore points,</text>
   <text x="716" y="232" class="tiny">port and range checks</text>

@@ -18,6 +18,7 @@ the design decisions behind them.
 | `netcheck.sh` | 220 | Diagnose the network, open firewall ports, scan for servers. |
 | `service.sh` | 233 | Generate systemd units so Stratus starts at boot. |
 | `servers.sh` | 241 | List the servers on this machine, scan a drive for others, remove one from the list, or delete one and all of its data. |
+| `stop.sh` | 210 | Stop the running server and every application it hosts, and clear a stale record left by a crash or a closed terminal. |
 
 ## Conventions
 

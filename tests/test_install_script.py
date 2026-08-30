@@ -136,6 +136,106 @@ class InstallScriptTests(unittest.TestCase):
         outcome = self.run_bash("./shell/install.sh --check")
         self.assertIn("python3", outcome.stdout)
         self.assertNotIn("Creating virtual environment", outcome.stdout)
+@unittest.skipUnless(BASH, "bash is required to run the shell tests")
+class StopScriptTests(unittest.TestCase):
+    """Stopping a server whose terminal was closed.
+
+    A server is started detached so it survives the terminal that launched it.
+    That is deliberate, but it means closing that terminal leaves a server
+    running with nothing on screen to stop it — and the next start refuses,
+    because only one server may run at a time.
+    """
+
+    SCRIPT = ROOT / "shell" / "stop.sh"
+
+    def run_bash(self, script: str) -> subprocess.CompletedProcess:
+        return subprocess.run([BASH, "-c", script], cwd=str(ROOT),
+                              capture_output=True, text=True, timeout=60)
+
+    def test_the_script_exists_and_is_executable_in_git(self):
+        self.assertTrue(self.SCRIPT.is_file())
+        modes = subprocess.run(["git", "ls-files", "-s", "shell/stop.sh"],
+                               cwd=str(ROOT), capture_output=True, text=True)
+        if modes.returncode == 0 and modes.stdout.strip():
+            self.assertTrue(modes.stdout.startswith("100755"),
+                            f"stop.sh is not executable in git: {modes.stdout.strip()}")
+
+    def test_help_lists_every_option(self):
+        outcome = subprocess.run([BASH, str(self.SCRIPT), "--help"], cwd=str(ROOT),
+                                 capture_output=True, text=True, timeout=60)
+        self.assertEqual(outcome.returncode, 0, outcome.stderr)
+        for flag in ("--apps", "--yes", "--status"):
+            self.assertIn(flag, outcome.stdout)
+        # The help must not leak the code that follows the comment block.
+        self.assertNotIn("set -euo pipefail", outcome.stdout)
+
+    def test_the_entry_point_dispatches_to_it(self):
+        entry = (ROOT / "stratus.sh").read_text(encoding="utf-8")
+        self.assertIn('stop)', entry)
+        self.assertIn("stop.sh", entry)
+
+    def test_the_entry_point_help_mentions_stopping(self):
+        outcome = subprocess.run([BASH, str(ROOT / "stratus.sh"), "--help"], cwd=str(ROOT),
+                                 capture_output=True, text=True, timeout=60)
+        self.assertEqual(outcome.returncode, 0, outcome.stderr)
+        self.assertIn("stop", outcome.stdout)
+
+    def test_it_terminates_before_it_kills(self):
+        """A server must be able to close its database cleanly.
+
+        SIGKILL first would leave SQLite with a hot journal, so TERM has to be
+        tried and given time before KILL is even considered.
+        """
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        term = text.index("kill -TERM")
+        kill = text.index("kill -KILL")
+        self.assertLess(term, kill, "SIGKILL is sent before SIGTERM")
+        self.assertIn("pid_alive", text)
+
+    def test_it_only_ever_targets_this_users_processes(self):
+        """pgrep without -u would find another user's server, which this has
+        no business stopping and no permission to stop."""
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('pgrep -u "$(id -u)"', text)
+
+    def test_it_does_not_stop_the_service_unit_by_pattern(self):
+        """stratus-server.service is the server itself, not a hosted app.
+
+        Sweeping it up with the applications would stop the server while
+        claiming to have stopped an app.
+        """
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("grep -v '^stratus-server\\.service$'", text)
+
+    def test_a_stale_record_is_cleared(self):
+        """The record outlives a crash. Leaving it makes the next start refuse
+        for a reason the user cannot see."""
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("$STRATUS_ACTIVE_SERVER", text)
+        self.assertIn("stale", text.lower())
+
+    def test_status_changes_nothing(self):
+        """--status is a report; it must not contain a stop path."""
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        status_block = text[text.index("if (( STATUS_ONLY ))"):]
+        first_exit = status_block.index("exit 0")
+        self.assertNotIn("kill ", status_block[:first_exit])
+        self.assertNotIn("rm -f", status_block[:first_exit])
+
+    def test_the_unit_filter_keeps_apps_and_drops_the_server(self):
+        """The awk/grep pipeline, run against real systemctl-shaped input."""
+        listing = (
+            "stratus-abc123.service   loaded active running Stratus app\n"
+            "stratus-server.service   loaded active running Stratus server\n"
+            "stratus-def456.service   loaded active running Stratus app\n"
+        )
+        outcome = self.run_bash(
+            f"printf '%s' '{listing}' | awk '{{ print $1 }}' | grep -v '^stratus-server\\.service$'"
+        )
+        names = outcome.stdout.split()
+        self.assertIn("stratus-abc123.service", names)
+        self.assertIn("stratus-def456.service", names)
+        self.assertNotIn("stratus-server.service", names)
 
 
 if __name__ == "__main__":

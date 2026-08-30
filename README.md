@@ -5,8 +5,8 @@
 <p align="center">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20only-1d1740?style=flat-square">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-4a3f9e?style=flat-square">
-  <img alt="Bash" src="https://img.shields.io/badge/bash-2%2C455%20lines-2d6a4f?style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-202%20passing-2d6a4f?style=flat-square">
+  <img alt="Bash" src="https://img.shields.io/badge/bash-2%2C767%20lines-2d6a4f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-212%20passing-2d6a4f?style=flat-square">
   <img alt="Encryption" src="https://img.shields.io/badge/encryption-end--to--end-7ee2a8?style=flat-square">
 </p>
 
@@ -125,7 +125,23 @@ apt search '^python3.*-venv$'
 
 </details>
 
-### 3. Start it
+### 3. Check everything is healthy
+
+Run this **before** starting anything. It is faster to be told what is wrong
+than to find out from a failure later:
+
+```bash
+./stratus.sh doctor
+```
+
+Twenty-plus checks on dependencies, permissions, storage, ports, the network,
+and whether guest confinement is actually available on this machine. Every
+failure comes with the command that fixes it.
+
+Two warnings are normal on a fresh machine — *no device identity yet* and *no
+server created yet*. Both are created the first time you host or join.
+
+### 4. Start it
 
 ```bash
 ./stratus.sh
@@ -136,14 +152,34 @@ you through hosting a server or joining someone else's — choosing a drive,
 naming the server, setting a join token, and picking how much of the machine
 guests may use.
 
-### 4. Check everything is healthy
+### 5. Stopping it
+
+The server keeps running when you close its terminal. That is deliberate — a
+machine people are relying on should not go down because someone shut a window.
+It does mean that closing that terminal leaves a server running with nothing on
+screen to stop it, and the next start refuses because only one may run at a
+time.
+
+This is the way back:
 
 ```bash
-./stratus.sh doctor
+./stratus.sh stop
 ```
 
-Twenty-plus checks on dependencies, permissions, storage, ports, the network,
-and whether guest confinement is actually available on this machine.
+It stops the control server, stops every application it was hosting, and clears
+the record so you can start again. Nothing stored is deleted.
+
+To see what is running without stopping anything:
+
+```bash
+./stratus.sh stop --status
+```
+
+To stop only the hosted applications and leave the server up:
+
+```bash
+./stratus.sh stop --apps
+```
 
 ---
 
@@ -192,7 +228,7 @@ start: python3 -m http.server $PORT
 
 ### Running the machine
 
-Eight Bash tools, because this is a shell programming project:
+Nine Bash tools, because this is a shell programming project:
 
 | Command | What it does |
 |---|---|
@@ -204,6 +240,7 @@ Eight Bash tools, because this is a shell programming project:
 | `./stratus.sh netcheck` | Address, subnet, ports, firewall and reachability checks |
 | `./stratus.sh service` | Install Stratus as a hardened systemd user service |
 | `./stratus.sh servers` | List servers, scan a drive for others, remove or delete one |
+| `./stratus.sh stop` | Stop the server and its applications; recover from a closed terminal |
 
 Every one answers `--help`, and there is a line-by-line explanation of all of
 them in **[docs/GUIDE.md](docs/GUIDE.md)**.
@@ -288,7 +325,7 @@ but authorship does not.
 
 ```
 stratus.sh              One entry point for everything
-shell/                  2,455 lines of Bash — the operations toolkit
+shell/                  2,767 lines of Bash — the operations toolkit
   ├── lib/common.sh     Shared colours, logging, guards, helpers
   ├── install.sh        Dependency detection and installation
   ├── doctor.sh         Health checks
@@ -297,7 +334,8 @@ shell/                  2,455 lines of Bash — the operations toolkit
   ├── backup.sh         Snapshot and restore
   ├── netcheck.sh       Network diagnostics
   ├── service.sh        systemd service installation
-  └── servers.sh        Multi-server management
+  ├── servers.sh        Multi-server management
+  └── stop.sh           Stop a running server and its applications
 core/                   The platform
   ├── security/         Envelope encryption, identity, passphrase sealing
   ├── platform/         Database, membership rules, wire protocol, session
@@ -308,7 +346,7 @@ core/                   The platform
 web/                    The two built-in websites
   ├── chat/             Flask + WebCrypto
   └── drive/            Flask + WebCrypto
-tests/                  202 tests
+tests/                  212 tests
 docs/                   Guide, architecture, hosting, security, testing
 examples/               Two ready-to-deploy sample projects
 ```
@@ -335,7 +373,7 @@ Every folder has its own `README.md` explaining what lives there and why.
 ./stratus.sh test
 ```
 
-202 tests covering the encryption (including **Python ↔ JavaScript interop**,
+212 tests covering the encryption (including **Python ↔ JavaScript interop**,
 proved by running the real browser crypto under Node), the membership rules,
 the wire protocol, archive safety, the sandbox, drive discovery, the terminal
 interface, and every security fix listed above.

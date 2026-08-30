@@ -33,6 +33,7 @@ usage() {
     ./stratus.sh                 Open the full-screen interface (host or join)
     ./stratus.sh terminal        Join a server on this network
     ./stratus.sh admin           Host dashboard: policy, devices, approvals
+    ./stratus.sh stop            Stop the running server and its applications
 
   OPERATIONS
     ./stratus.sh monitor         Live view of applications and resource use
@@ -43,6 +44,7 @@ usage() {
     ./stratus.sh netcheck        Check the network; --fix opens firewall ports
     ./stratus.sh service install Run the server automatically at boot
     ./stratus.sh servers         List the servers on this machine
+    ./stratus.sh stop --status   Show what is running without stopping it
 
   DEVELOPMENT
     ./stratus.sh test            Run the automated test suite
@@ -87,6 +89,7 @@ case "$command" in
     netcheck)  exec "$STRATUS_SHELL_DIR/netcheck.sh" "$@" ;;
     service)   exec "$STRATUS_SHELL_DIR/service.sh"  "$@" ;;
     servers)   exec "$STRATUS_SHELL_DIR/servers.sh"   "$@" ;;
+    stop)      exec "$STRATUS_SHELL_DIR/stop.sh"      "$@" ;;
 
     # ---- the platform itself ------------------------------------------------
     terminal)  require_linux; run_python core.interface.terminal "$@" ;;
