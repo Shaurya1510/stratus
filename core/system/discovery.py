@@ -209,7 +209,7 @@ def candidate_addresses(deep: bool = True, extra: list[str] | None = None) -> li
     try: interfaces = local_interfaces()
     except Exception: interfaces = []
 
-    mine = {item["address"] for item in interfaces}
+    mine = {item.get("address") for item in interfaces if item.get("address")}
     networks: list[ipaddress.IPv4Network] = []
     seen_networks: set[str] = set()
 
@@ -222,21 +222,33 @@ def candidate_addresses(deep: bool = True, extra: list[str] | None = None) -> li
         networks.append(network)
 
     for item in interfaces:
-        add_network(item["network"])
+        # An interface record may be missing its network, in which case one is
+        # derived from the address and prefix rather than the whole search
+        # failing over a single odd entry.
+        text = item.get("network") or ""
+        if not text and item.get("address"):
+            text = f"{item['address']}/{item.get('prefix', 24)}"
+        if text: add_network(text)
     if deep:
         for text in COMMON_RANGES:
             add_network(text)
 
     addresses: list[str] = []
+    chosen: set[str] = set()
+
+    def take(value: str) -> bool:
+        """Add one address. Returns False once the cap is reached."""
+        if value in mine or value in chosen: return True
+        chosen.add(value)
+        addresses.append(value)
+        return len(addresses) < MAX_SWEEP_ADDRESSES
+
     for value in extra or []:
-        if value and value not in mine: addresses.append(value)
+        if value and not take(value): return addresses
 
     for network in networks:
         for host in network.hosts():
-            text = str(host)
-            if text in mine: continue
-            addresses.append(text)
-            if len(addresses) >= MAX_SWEEP_ADDRESSES: return addresses
+            if not take(str(host)): return addresses
     return addresses
 
 

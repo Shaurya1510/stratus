@@ -279,6 +279,20 @@ class CandidateAddressTests(unittest.TestCase):
         found = self.candidates(self.HOTSPOT)
         self.assertLessEqual(len(found), discovery.MAX_SWEEP_ADDRESSES)
 
+    def test_a_remembered_address_inside_a_swept_subnet_is_probed_once(self):
+        """It was added by name and then again by enumeration."""
+        found = self.candidates(self.HOTSPOT, extra=["192.168.43.99"])
+        self.assertEqual(found.count("192.168.43.99"), 1, "the address is probed twice")
+
+    def test_an_address_is_never_probed_twice_at_all(self):
+        found = self.candidates(self.HOTSPOT, extra=["192.168.43.99", "192.168.43.99"])
+        self.assertEqual(len(found), len(set(found)), "the sweep contains duplicates")
+
+    def test_a_flood_of_remembered_addresses_cannot_break_the_cap(self):
+        many = [f"203.0.113.{index}" for index in range(1, 255)] * 12
+        found = self.candidates(self.HOTSPOT, extra=many)
+        self.assertLessEqual(len(found), discovery.MAX_SWEEP_ADDRESSES)
+
     def test_remembered_addresses_are_probed_first(self):
         """A server joined before answers instantly; it should not wait behind
         fourteen hundred other probes."""
@@ -330,6 +344,83 @@ class JoinedServerMemoryTests(unittest.TestCase):
         for index in range(30):
             self.registry.remember_joined(f"10.0.0.{index + 1}", 5050, f"S{index}")
         self.assertLessEqual(len(self.registry.joined_servers()), 20)
+
+
+class MalformedInputTests(unittest.TestCase):
+    """The parsers read whatever `ip` prints, so they must survive anything.
+
+    Finding servers must never be able to take the client down. A different
+    distribution's iproute2, a wrapper script on PATH, or a partial record from
+    a caller are all things that reach these functions.
+    """
+
+    def listing(self, stdout: str, code: int = 0):
+        import subprocess
+        return subprocess.CompletedProcess(args=[], returncode=code, stdout=stdout, stderr="")
+
+    def read_interfaces(self, stdout: str, code: int = 0):
+        import subprocess
+        from core.system import network
+        with patch.object(subprocess, "run", return_value=self.listing(stdout, code)):
+            return network.local_interfaces()
+
+    def test_json_that_is_not_a_list_does_not_raise(self):
+        """`ip` is expected to print a list. Iterating an object yields its
+        keys, which are strings, and asking a string for .get raised."""
+        self.assertIsInstance(self.read_interfaces('{"unexpected": true}'), list)
+
+    def test_output_that_is_not_json_does_not_raise(self):
+        self.assertIsInstance(self.read_interfaces("this is not json at all"), list)
+
+    def test_a_null_address_list_does_not_raise(self):
+        found = self.read_interfaces('[{"ifname":"eth0","operstate":"UP","addr_info":null}]')
+        self.assertIsInstance(found, list)
+
+    def test_a_malformed_address_is_skipped_not_fatal(self):
+        found = self.read_interfaces(
+            '[{"ifname":"eth0","operstate":"UP","addr_info":'
+            '[{"family":"inet","local":"not-an-ip","prefixlen":24}]}]')
+        self.assertNotIn("not-an-ip", [item["address"] for item in found])
+
+    def test_a_prefix_that_is_not_a_number_falls_back(self):
+        found = self.read_interfaces(
+            '[{"ifname":"eth0","operstate":"UP","addr_info":'
+            '[{"family":"inet","local":"10.0.0.1","prefixlen":"wide"}]}]')
+        self.assertEqual([item["address"] for item in found], ["10.0.0.1"])
+        self.assertEqual(found[0]["prefix"], 24)
+
+    def test_an_interface_record_without_a_network_is_usable(self):
+        """It used to raise KeyError and abandon the whole search."""
+        partial = [{"interface": "x", "address": "10.0.0.1", "prefix": 24, "broadcast": ""}]
+        with patch("core.system.network.local_interfaces", return_value=partial):
+            found = discovery.candidate_addresses(deep=False)
+        self.assertIn("10.0.0.2", found)
+
+    def test_an_interface_record_with_a_nonsense_network_is_skipped(self):
+        broken = [{"interface": "x", "address": "10.0.0.1", "prefix": 24, "network": "potato"}]
+        with patch("core.system.network.local_interfaces", return_value=broken):
+            self.assertEqual(discovery.candidate_addresses(deep=False), [])
+
+    def test_a_single_host_route_yields_nothing_to_sweep(self):
+        single = [{"interface": "x", "address": "10.0.0.1", "prefix": 32,
+                   "broadcast": "", "network": "10.0.0.1/32"}]
+        with patch("core.system.network.local_interfaces", return_value=single):
+            self.assertEqual(discovery.candidate_addresses(deep=False), [])
+
+    def test_unroutable_and_malformed_addresses_do_not_stop_a_sweep(self):
+        found = discovery.sweep(["999.999.999.999", "", "not-an-ip"], 5051, timeout=0.3)
+        self.assertEqual(found, {})
+
+    def test_a_failed_neighbour_is_not_probed(self):
+        import subprocess
+        sample = ("192.168.1.1 dev wlan0 lladdr aa:bb:cc:dd:ee:ff REACHABLE\n"
+                  "192.168.1.5 dev wlan0 FAILED\n"
+                  "192.168.1.9 dev wlan0 lladdr 11:22:33:44:55:66 STALE\n")
+        with patch.object(subprocess, "run", return_value=self.listing(sample)):
+            found = discovery.neighbours()
+        self.assertIn("192.168.1.1", found)
+        self.assertIn("192.168.1.9", found)
+        self.assertNotIn("192.168.1.5", found)
 
 
 if __name__ == "__main__":

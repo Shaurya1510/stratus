@@ -1425,12 +1425,25 @@ class JoinScreen(Screen):
             self.call_ui(self.render_servers, quick, interfaces, True)
 
         try:
-            servers = discover_everywhere(self.discovery_port, timeout=6.0,
-                                          extra=self.remembered_hosts())
+            wide = discover_everywhere(self.discovery_port, timeout=6.0,
+                                       extra=self.remembered_hosts())
         except Exception as exc:
-            if quick: return
-            self.call_ui(self.status, f"Discovery unavailable ({exc}). Enter an address manually.", "warn"); return
-        self.call_ui(self.render_servers, servers, interfaces, False)
+            if not quick:
+                self.call_ui(self.status,
+                             f"Discovery unavailable ({exc}). Enter an address manually.", "warn")
+                return
+            # The quick results are still good; only the wider search failed.
+            wide = []
+
+        # Merged, never replaced. The second phase runs its own broadcast, and
+        # UDP loses packets, so a server seen a moment ago can easily fail to
+        # answer again. Overwriting the list would take a server off the screen
+        # that the user was about to click.
+        merged: dict[tuple[str, int], dict] = {}
+        for item in list(quick) + list(wide):
+            try: merged[(item["host"], int(item["control_port"]))] = item
+            except (KeyError, TypeError, ValueError): continue
+        self.call_ui(self.render_servers, list(merged.values()), interfaces, False)
 
     def remembered_hosts(self) -> list[str]:
         """Addresses that worked before.

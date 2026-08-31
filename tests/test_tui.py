@@ -262,6 +262,63 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(screen.query_one("#join-host").value, "192.168.1.7")
 
+    async def test_a_server_found_quickly_is_never_taken_off_the_screen(self):
+        """The search runs in two phases and the second must only ever add.
+
+        The wider phase re-runs broadcast internally, and UDP loses packets, so
+        a server that answered a second ago can easily fail to answer again.
+        Replacing the list rather than merging it took a server off the screen
+        the user was about to click, and put "no servers answered" in its place.
+        """
+        quick = [{"name": "Friend's Server", "host": "192.168.43.99", "control_port": 5050}]
+        with patch("core.system.discovery.discover", return_value=quick),\
+             patch("core.system.discovery.discover_everywhere", return_value=[]),\
+             patch("core.system.network.local_interfaces", return_value=[]):
+            app = ClientTUI()
+            async with app.run_test(size=(140, 45)) as pilot:
+                await pilot.pause()
+                listing = app.screen.query_one("#server-list")
+                self.assertTrue(await settle(pilot, lambda: listing.option_count == 1))
+                for _ in range(20): await pilot.pause(0.05)
+                shown = [str(listing.get_option_at_index(index).prompt)
+                         for index in range(listing.option_count)]
+                status = str(app.screen.query_one("#join-status").content)
+
+        self.assertTrue(any("Friend's Server" in line for line in shown), shown)
+        self.assertNotIn("still searching", status.lower())
+
+    async def test_a_failing_wide_search_keeps_what_was_already_found(self):
+        quick = [{"name": "Friend's Server", "host": "192.168.43.99", "control_port": 5050}]
+        with patch("core.system.discovery.discover", return_value=quick),\
+             patch("core.system.discovery.discover_everywhere", side_effect=OSError("gone")),\
+             patch("core.system.network.local_interfaces", return_value=[]):
+            app = ClientTUI()
+            async with app.run_test(size=(140, 45)) as pilot:
+                await pilot.pause()
+                listing = app.screen.query_one("#server-list")
+                self.assertTrue(await settle(pilot, lambda: listing.option_count == 1))
+                for _ in range(20): await pilot.pause(0.05)
+                status = str(app.screen.query_one("#join-status").content)
+                count = listing.option_count
+
+        self.assertEqual(count, 1, "the server was lost when the wider search failed")
+        self.assertNotIn("still searching", status.lower(),
+                         "the status never settled after the search ended")
+
+    async def test_a_server_found_by_both_searches_is_listed_once(self):
+        both = [{"name": "Friend's Server", "host": "192.168.43.99", "control_port": 5050}]
+        with patch("core.system.discovery.discover", return_value=list(both)),\
+             patch("core.system.discovery.discover_everywhere", return_value=list(both)),\
+             patch("core.system.network.local_interfaces", return_value=[]):
+            app = ClientTUI()
+            async with app.run_test(size=(140, 45)) as pilot:
+                await pilot.pause()
+                listing = app.screen.query_one("#server-list")
+                self.assertTrue(await settle(pilot, lambda: listing.option_count >= 1))
+                for _ in range(20): await pilot.pause(0.05)
+                count = listing.option_count
+        self.assertEqual(count, 1, "one server was listed twice")
+
     async def test_an_empty_search_names_this_devices_own_network(self):
         """"Nothing found" is useless on its own.
 

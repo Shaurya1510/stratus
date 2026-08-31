@@ -162,15 +162,25 @@ def local_interfaces() -> list[dict]:
         result = subprocess.run(["ip", "-json", "-4", "addr", "show"],
                                 capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
-            for entry in json.loads(result.stdout or "[]"):
+            # `ip` is expected to print a list of interfaces. Anything else —
+            # an object, a string, a wrapper's error report — is not something
+            # to iterate over, and iterating it anyway raised an exception the
+            # caller had no reason to expect.
+            entries = json.loads(result.stdout or "[]")
+            if not isinstance(entries, list): entries = []
+            for entry in entries:
+                if not isinstance(entry, dict): continue
                 # A cable that is unplugged still has an address; sending on it
                 # wastes a second of the scan and can never be answered.
                 if entry.get("operstate") == "DOWN": continue
                 for info in entry.get("addr_info") or []:
+                    if not isinstance(info, dict): continue
                     if info.get("family") != "inet": continue
+                    try: prefix = int(info.get("prefixlen", 24))
+                    except (TypeError, ValueError): prefix = 24
                     remember(entry.get("ifname", "?"), info.get("local", ""),
-                             int(info.get("prefixlen", 24)), info.get("broadcast") or "")
-    except (OSError, ValueError, subprocess.SubprocessError):
+                             prefix, info.get("broadcast") or "")
+    except (OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError):
         pass
 
     if not found:
@@ -186,7 +196,8 @@ def local_interfaces() -> list[dict]:
                     address, _, prefix = parts[1].partition("/")
                     broadcast = parts[parts.index("brd") + 1] if "brd" in parts else ""
                     remember(name, address, int(prefix or 24), broadcast)
-        except (OSError, ValueError, subprocess.SubprocessError, IndexError):
+        except (OSError, ValueError, TypeError, AttributeError,
+                subprocess.SubprocessError, IndexError):
             pass
 
     if not found:

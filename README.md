@@ -6,7 +6,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20only-1d1740?style=flat-square">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-4a3f9e?style=flat-square">
   <img alt="Bash" src="https://img.shields.io/badge/bash-2%2C767%20lines-2d6a4f?style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-243%20passing-2d6a4f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-259%20passing-2d6a4f?style=flat-square">
   <img alt="Encryption" src="https://img.shields.io/badge/encryption-end--to--end-7ee2a8?style=flat-square">
 </p>
 
@@ -386,7 +386,7 @@ core/                   The platform
 web/                    The two built-in websites
   ├── chat/             Flask + WebCrypto
   └── drive/            Flask + WebCrypto
-tests/                  243 tests
+tests/                  259 tests
 docs/                   Guide, architecture, hosting, security, testing
 examples/               Two ready-to-deploy sample projects
 ```
@@ -413,7 +413,7 @@ Every folder has its own `README.md` explaining what lives there and why.
 ./stratus.sh test
 ```
 
-243 tests covering the encryption (including **Python ↔ JavaScript interop**,
+259 tests covering the encryption (including **Python ↔ JavaScript interop**,
 proved by running the real browser crypto under Node), the membership rules,
 the wire protocol, archive safety, the sandbox, drive discovery, the terminal
 interface, and every security fix listed above.
