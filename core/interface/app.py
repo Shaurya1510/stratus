@@ -1372,6 +1372,7 @@ class JoinScreen(Screen):
 
     def __init__(self, discovery_port: int = 5051):
         super().__init__(); self.discovery_port = discovery_port; self.servers: list[dict] = []
+        self.interfaces: list[dict] = []
         self.identity = load_or_create_identity()
 
     def compose(self) -> ComposeResult:
@@ -1405,19 +1406,62 @@ class JoinScreen(Screen):
     @work(thread=True, exclusive=True, group="discover")
     def scan(self) -> None:
         from core.system.discovery import discover
+        from core.system.network import local_interfaces
+        try: interfaces = local_interfaces()
+        except Exception: interfaces = []
         try: servers = discover(self.discovery_port)
         except Exception as exc:
             self.call_ui(self.status, f"Discovery unavailable ({exc}). Enter an address manually.", "warn"); return
-        self.call_ui(self.render_servers, servers)
+        self.call_ui(self.render_servers, servers, interfaces)
 
-    def render_servers(self, servers: list[dict]) -> None:
+    def render_servers(self, servers: list[dict], interfaces: list[dict] | None = None) -> None:
         self.servers = servers
+        self.interfaces = interfaces or []
         listing = self.query_one("#server-list", OptionList); listing.clear_options()
         if not servers:
-            self.status("No servers answered. A firewall may block discovery — enter the address manually.", "warn"); return
+            self.explain_empty()
+            return
         listing.add_options([Option(f"{item['name']}  —  {item['host']}:{item['control_port']}", id=str(index)) for index, item in enumerate(servers)])
         listing.highlighted = 0
         self.status(f"Found {len(servers)} server(s). Choose one, then enter the token.", "good")
+
+    def explain_empty(self) -> None:
+        """Say which network this device is actually on, and what usually breaks.
+
+        Almost every report of "I cannot find the server" turns out to be one
+        of three things, and the first two are visible from here. Showing this
+        device's own address lets the two people compare in one glance: if the
+        first three numbers differ, they are not on the same network at all and
+        no amount of searching will help.
+        """
+        listing = self.query_one("#server-list", OptionList)
+        lines = ["[#ffcf7a]No servers answered on this network.[/]", ""]
+
+        if self.interfaces:
+            lines.append("[bold]This device is on:[/]")
+            for item in self.interfaces:
+                lines.append(f"  {item['address']}/{item['prefix']}  [dim]({item['interface']} · {item['network']})[/]")
+            lines.append("")
+            lines.append("[bold]Compare that with the host's address.[/]")
+            lines.append("[dim]If the first three numbers differ, you are on different[/]")
+            lines.append("[dim]networks and no search can reach them.[/]")
+        else:
+            lines.append("[dim]This device has no usable network address.[/]")
+
+        lines += [
+            "",
+            "[bold]Common causes[/]",
+            "[dim]• A virtual machine set to NAT has its own private network.[/]",
+            "[dim]  Change its adapter to Bridged so it joins the real one.[/]",
+            "[dim]• Phone hotspots often block devices from seeing each other[/]",
+            "[dim]  (client isolation). Try a normal Wi-Fi router.[/]",
+            "[dim]• A firewall may drop the search while letting traffic through.[/]",
+            "",
+            "[#7ee2a8]You can still type the host's address on the right.[/]",
+            "[dim]Ask them for the address Stratus shows on their screen.[/]",
+        ]
+        listing.add_options([Option(line, disabled=True) for line in lines])
+        self.status("Nothing found automatically — enter the address manually.", "warn")
 
     @on(OptionList.OptionSelected, "#server-list")
     def choose(self, event: OptionList.OptionSelected) -> None:

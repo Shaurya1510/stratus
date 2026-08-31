@@ -63,7 +63,7 @@
 
   <!-- ============================== shell ============================== -->
   <text x="700" y="30" class="title">Operations</text>
-  <text x="700" y="48" class="small">2,767 lines of Bash</text>
+  <text x="700" y="48" class="small">2767 lines of Bash</text>
 
   <rect class="card" x="700" y="62" width="172" height="200"/>
   <text x="716" y="88" class="label">stratus.sh</text>

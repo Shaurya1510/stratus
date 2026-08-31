@@ -126,3 +126,87 @@ def browser_host(address: str) -> str:
     context and therefore the only way WebCrypto works without a certificate.
     """
     return "127.0.0.1" if is_local(address) else address
+
+
+def local_interfaces() -> list[dict]:
+    """Every usable IPv4 network this machine is attached to.
+
+    Returns one entry per address with its interface name, its address, the
+    prefix length, and the broadcast address for that subnet.
+
+    `ip -json addr` is asked first because it is exact and iproute2 is already
+    a requirement. Its JSON output was added in iproute2 4.13 (2017); anything
+    older falls back to reading the plain text, and a machine where neither
+    works still gets the single address the routing table implies.
+    """
+    import ipaddress
+    import json
+    import subprocess
+
+    found: list[dict] = []
+    seen: set[str] = set()
+
+    def remember(name: str, address: str, prefix: int, broadcast: str = "") -> None:
+        if not address or address in seen: return
+        try:
+            interface = ipaddress.ip_interface(f"{address}/{prefix}")
+        except ValueError:
+            return
+        if interface.ip.is_loopback or interface.ip.is_link_local: return
+        seen.add(address)
+        found.append({"interface": name, "address": address, "prefix": prefix,
+                      "broadcast": broadcast or str(interface.network.broadcast_address),
+                      "network": str(interface.network)})
+
+    try:
+        result = subprocess.run(["ip", "-json", "-4", "addr", "show"],
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            for entry in json.loads(result.stdout or "[]"):
+                # A cable that is unplugged still has an address; sending on it
+                # wastes a second of the scan and can never be answered.
+                if entry.get("operstate") == "DOWN": continue
+                for info in entry.get("addr_info") or []:
+                    if info.get("family") != "inet": continue
+                    remember(entry.get("ifname", "?"), info.get("local", ""),
+                             int(info.get("prefixlen", 24)), info.get("broadcast") or "")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+
+    if not found:
+        try:
+            result = subprocess.run(["ip", "-4", "addr", "show"], capture_output=True, text=True, timeout=5)
+            name = "?"
+            for line in (result.stdout or "").splitlines():
+                stripped = line.strip()
+                if not line.startswith(" ") and ": " in line:
+                    name = line.split(": ", 2)[1].split("@")[0]
+                elif stripped.startswith("inet "):
+                    parts = stripped.split()
+                    address, _, prefix = parts[1].partition("/")
+                    broadcast = parts[parts.index("brd") + 1] if "brd" in parts else ""
+                    remember(name, address, int(prefix or 24), broadcast)
+        except (OSError, ValueError, subprocess.SubprocessError, IndexError):
+            pass
+
+    if not found:
+        remember("default", lan_address(), 24)
+
+    return found
+
+
+def same_network(first: str, second: str, prefix: int = 24) -> bool:
+    """Whether two addresses could reach each other without a router.
+
+    Used to explain the commonest reason two people cannot see each other: the
+    virtual machine is on its own private NAT network rather than on the Wi-Fi
+    the other person is using, so no amount of broadcasting will help.
+    """
+    import ipaddress
+
+    try:
+        one = ipaddress.ip_interface(f"{first}/{prefix}")
+        two = ipaddress.ip_address(second)
+    except ValueError:
+        return False
+    return two in one.network

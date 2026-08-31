@@ -8,7 +8,8 @@
 #
 #   ./stratus.sh netcheck             report the network state
 #   ./stratus.sh netcheck --fix       open the required firewall ports
-#   ./stratus.sh netcheck --scan      look for Stratus servers on this network
+#   ./stratus.sh netcheck --scan      look for Stratus servers on every network
+#                                     this machine is attached to
 # =============================================================================
 set -euo pipefail
 
@@ -163,44 +164,43 @@ fi
 # =============================================================================
 if (( SCAN )); then
     section "Scanning for Stratus servers"
-    info "Broadcasting on UDP $DISCOVERY_PORT…"
+    info "Probing every network this machine is on, on UDP $DISCOVERY_PORT\u2026"
 
-    python3 - "$DISCOVERY_PORT" <<'PYTHON'
-import json, socket, sys, time
+    # The real discovery module is used rather than a second copy of it here.
+    # A private copy is how a fix ends up reaching only one of them: this
+    # script once had its own, which probed a single broadcast address from a
+    # single interface long after the application had stopped doing that.
+    ( cd "$STRATUS_ROOT" && "${STRATUS_PYTHON:-python3}" - "$DISCOVERY_PORT" <<'PYTHON'
+import sys
+sys.path.insert(0, ".")
+from core.system.discovery import discover
+from core.system.network import local_interfaces
 
 port = int(sys.argv[1])
-probe = b"STRATUS_DISCOVER_V1"
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-sock.settimeout(0.3)
-try:
-    sock.sendto(probe, ("255.255.255.255", port))
-except OSError as error:
-    print(f"  broadcast failed: {error}")
-    raise SystemExit(1)
+print("  This machine is on:")
+interfaces = local_interfaces()
+for item in interfaces:
+    print(f"    {item['address']}/{item['prefix']:<3} {item['interface']:<10} {item['network']}")
+if not interfaces:
+    print("    (no usable network address)")
 
-found = {}
-deadline = time.monotonic() + 2.0
-while time.monotonic() < deadline:
-    try:
-        data, address = sock.recvfrom(4096)
-    except socket.timeout:
-        continue
-    try:
-        item = json.loads(data)
-        found[address[0]] = item
-    except ValueError:
-        continue
-sock.close()
-
+print()
+found = discover(port)
 if not found:
-    print("  no servers answered")
+    print("  No servers answered.")
+    print()
+    print("  Compare the addresses above with the host's address.")
+    print("  If the first three numbers differ, you are on different networks:")
+    print("    - a virtual machine set to NAT has its own private network;")
+    print("      change its adapter to Bridged to join the real one")
+    print("    - phone hotspots often stop devices seeing each other")
     raise SystemExit(0)
 
-for host, item in sorted(found.items()):
-    print(f"  {item.get('name', 'unnamed'):<30} {host}:{item.get('control_port', '?')}")
+for item in sorted(found, key=lambda entry: entry.get("host", "")):
+    print(f"  {item.get('name', 'unnamed'):<30} {item.get('host')}:{item.get('control_port', '?')}")
 PYTHON
+    ) || warn "The scan could not be completed"
 
     say ""
     note "Join one with: ./stratus.sh terminal"

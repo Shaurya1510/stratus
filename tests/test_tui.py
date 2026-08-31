@@ -262,6 +262,51 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(screen.query_one("#join-host").value, "192.168.1.7")
 
+    async def test_an_empty_search_names_this_devices_own_network(self):
+        """"Nothing found" is useless on its own.
+
+        Showing this device's address lets two people compare in one glance:
+        if the first three numbers differ they are on separate networks, which
+        is the commonest cause and one no amount of searching can fix.
+        """
+        interfaces = [{"interface": "eth0", "address": "192.168.226.130", "prefix": 24,
+                       "broadcast": "192.168.226.255", "network": "192.168.226.0/24"}]
+        with patch("core.system.discovery.discover", return_value=[]),\
+             patch("core.system.network.local_interfaces", return_value=interfaces):
+            app = ClientTUI()
+            async with app.run_test(size=(140, 45)) as pilot:
+                await pilot.pause()
+                screen = app.screen
+                listing = screen.query_one("#server-list")
+                self.assertTrue(await settle(pilot, lambda: listing.option_count > 0))
+                shown = "\n".join(str(listing.get_option_at_index(index).prompt)
+                                  for index in range(listing.option_count))
+                status = str(screen.query_one("#join-status").content)
+
+        self.assertIn("192.168.226.130", shown)
+        self.assertIn("192.168.226.0/24", shown)
+        self.assertIn("eth0", shown)
+        # The two causes the user cannot deduce on their own.
+        self.assertIn("NAT", shown)
+        self.assertIn("Bridged", shown)
+        self.assertIn("hotspot", shown.lower())
+        # And the way forward, which always works.
+        self.assertIn("manually", (shown + status).lower())
+
+    async def test_the_diagnosis_never_offers_a_fake_server_to_select(self):
+        """The explanation is rendered into the server list, so none of those
+        lines may be selectable — choosing one would index into an empty list."""
+        with patch("core.system.discovery.discover", return_value=[]),\
+             patch("core.system.network.local_interfaces", return_value=[]):
+            app = ClientTUI()
+            async with app.run_test(size=(140, 45)) as pilot:
+                await pilot.pause()
+                listing = app.screen.query_one("#server-list")
+                self.assertTrue(await settle(pilot, lambda: listing.option_count > 0))
+                disabled = [listing.get_option_at_index(index).disabled
+                            for index in range(listing.option_count)]
+        self.assertTrue(all(disabled), "an explanation line could be selected as a server")
+
     async def test_admin_dashboard_applies_a_preset(self):
         client = FakeClient()
         app = AdminTUI(client.call, {"name": "Test", "storage": "/mnt/test", "port": 5050})

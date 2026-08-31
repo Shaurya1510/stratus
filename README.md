@@ -6,7 +6,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20only-1d1740?style=flat-square">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-4a3f9e?style=flat-square">
   <img alt="Bash" src="https://img.shields.io/badge/bash-2%2C767%20lines-2d6a4f?style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-212%20passing-2d6a4f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-227%20passing-2d6a4f?style=flat-square">
   <img alt="Encryption" src="https://img.shields.io/badge/encryption-end--to--end-7ee2a8?style=flat-square">
 </p>
 
@@ -181,6 +181,40 @@ To stop only the hosted applications and leave the server up:
 ./stratus.sh stop --apps
 ```
 
+<details>
+<summary><b>If you cannot see someone else's server</b></summary>
+
+Stratus finds servers by broadcasting on every network this machine is attached
+to. When nothing is found, the Join screen lists **your own addresses** — compare
+them with the host's. If the first three numbers differ, you are not on the same
+network and no search can reach them.
+
+The same check from the command line:
+
+```bash
+./stratus.sh netcheck --scan
+```
+
+The three usual causes:
+
+- **A virtual machine set to NAT.** VMware and VirtualBox default to NAT, which
+  puts the VM on its own private network (often `192.168.x.x` with nothing else
+  on it). Other devices cannot reach it at all. Change the adapter to
+  **Bridged** so the VM joins the real network and gets an address from the same
+  router or hotspot as everyone else.
+- **Phone hotspot client isolation.** Many phones stop connected devices from
+  seeing each other, which blocks Stratus completely — even by direct address.
+  If a direct `ping` between the two machines fails, this is why. Use a normal
+  Wi-Fi router instead.
+- **A firewall.** Discovery is UDP; a firewall can drop it while still allowing
+  ordinary traffic. Open the ports with `./stratus.sh netcheck --fix`.
+
+**You can always type the address by hand.** Ask the host for the address
+Stratus shows on their screen and enter it on the Join screen — that works
+whenever the two machines can reach each other at all.
+
+</details>
+
 ---
 
 ## What you can do with it
@@ -325,7 +359,7 @@ but authorship does not.
 
 ```
 stratus.sh              One entry point for everything
-shell/                  2,767 lines of Bash — the operations toolkit
+shell/                  2767 lines of Bash — the operations toolkit
   ├── lib/common.sh     Shared colours, logging, guards, helpers
   ├── install.sh        Dependency detection and installation
   ├── doctor.sh         Health checks
@@ -346,7 +380,7 @@ core/                   The platform
 web/                    The two built-in websites
   ├── chat/             Flask + WebCrypto
   └── drive/            Flask + WebCrypto
-tests/                  212 tests
+tests/                  227 tests
 docs/                   Guide, architecture, hosting, security, testing
 examples/               Two ready-to-deploy sample projects
 ```
@@ -373,7 +407,7 @@ Every folder has its own `README.md` explaining what lives there and why.
 ./stratus.sh test
 ```
 
-212 tests covering the encryption (including **Python ↔ JavaScript interop**,
+227 tests covering the encryption (including **Python ↔ JavaScript interop**,
 proved by running the real browser crypto under Node), the membership rules,
 the wire protocol, archive safety, the sandbox, drive discovery, the terminal
 interface, and every security fix listed above.
