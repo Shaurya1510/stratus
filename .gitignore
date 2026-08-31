@@ -40,3 +40,6 @@ review_proposal_docs.py
 *.swp
 .DS_Store
 Thumbs.db
+
+# Servers this device has joined (addresses only, never tokens)
+joined-servers.json

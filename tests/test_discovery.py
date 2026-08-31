@@ -178,5 +178,159 @@ class InterfaceReadingTests(unittest.TestCase):
         self.assertEqual(found[0]["broadcast"], "10.42.0.255")
 
 
+class DirectSearchTests(unittest.TestCase):
+    """Probing every address one by one, for when broadcast is refused.
+
+    This is the case that prompted it: two people on one phone hotspot, both
+    servers running, neither visible. The hotspot was carrying ordinary traffic
+    perfectly well and dropping broadcasts.
+    """
+
+    def setUp(self):
+        self.port = free_port()
+        self.stop = threading.Event()
+        self.thread = threading.Thread(
+            target=discovery.serve_discovery,
+            args=("Friend's Server", 5050, self.port, self.stop), daemon=True)
+        self.thread.start()
+        time.sleep(0.2)
+
+    def tearDown(self):
+        self.stop.set()
+        self.thread.join(timeout=3)
+
+    def test_a_server_is_found_with_broadcast_completely_dead(self):
+        with patch.object(discovery, "discover", return_value=[]),\
+             patch.object(discovery, "candidate_addresses", return_value=["127.0.0.1"]),\
+             patch.object(discovery, "neighbours", return_value=[]):
+            found = discovery.discover_everywhere(self.port, timeout=3.0)
+
+        self.assertTrue(found, "the direct search found nothing broadcast had missed")
+        self.assertEqual(found[0]["name"], "Friend's Server")
+        self.assertEqual(found[0]["found_by"], "direct")
+
+    def test_broadcast_results_are_kept_alongside_direct_ones(self):
+        elsewhere = {"name": "Other", "host": "10.0.0.9", "control_port": 5050}
+        with patch.object(discovery, "discover", return_value=[dict(elsewhere)]),\
+             patch.object(discovery, "candidate_addresses", return_value=["127.0.0.1"]),\
+             patch.object(discovery, "neighbours", return_value=[]):
+            found = discovery.discover_everywhere(self.port, timeout=3.0)
+
+        hosts = {item["host"] for item in found}
+        self.assertIn("10.0.0.9", hosts)
+        self.assertIn("127.0.0.1", hosts)
+
+    def test_one_server_is_not_listed_twice_when_both_methods_find_it(self):
+        both = {"name": "Friend's Server", "host": "127.0.0.1", "control_port": 5050}
+        with patch.object(discovery, "discover", return_value=[dict(both)]),\
+             patch.object(discovery, "candidate_addresses", return_value=["127.0.0.1"]),\
+             patch.object(discovery, "neighbours", return_value=[]):
+            found = discovery.discover_everywhere(self.port, timeout=3.0)
+        self.assertEqual(len(found), 1, found)
+
+
+class CandidateAddressTests(unittest.TestCase):
+    """Which addresses get probed, and how many."""
+
+    HOTSPOT = [{"interface": "wlan0", "address": "192.168.43.17", "prefix": 24,
+                "broadcast": "192.168.43.255", "network": "192.168.43.0/24"}]
+
+    def candidates(self, interfaces, **kwargs):
+        with patch("core.system.network.local_interfaces", return_value=interfaces):
+            return discovery.candidate_addresses(**kwargs)
+
+    def test_the_local_subnet_is_covered(self):
+        found = self.candidates(self.HOTSPOT)
+        self.assertIn("192.168.43.99", found)
+        self.assertIn("192.168.43.1", found)
+
+    def test_this_machine_is_not_probed(self):
+        self.assertNotIn("192.168.43.17", self.candidates(self.HOTSPOT))
+
+    def test_the_network_and_broadcast_addresses_are_skipped(self):
+        found = self.candidates(self.HOTSPOT)
+        self.assertNotIn("192.168.43.0", found)
+        self.assertNotIn("192.168.43.255", found)
+
+    def test_other_networks_are_probed_too(self):
+        """A machine on its own private network can still route to a hotspot.
+
+        This is what lets a NAT virtual machine find a server it is not on the
+        same network as.
+        """
+        found = self.candidates([{"interface": "eth0", "address": "192.168.226.130",
+                                  "prefix": 24, "broadcast": "192.168.226.255",
+                                  "network": "192.168.226.0/24"}])
+        self.assertIn("192.168.43.50", found, "the Android hotspot range was not probed")
+        self.assertIn("172.20.10.5", found, "the iPhone hotspot range was not probed")
+
+    def test_a_shallow_search_stays_on_this_machines_networks(self):
+        found = self.candidates(self.HOTSPOT, deep=False)
+        self.assertIn("192.168.43.99", found)
+        self.assertNotIn("172.20.10.5", found)
+
+    def test_a_huge_route_is_refused_rather_than_enumerated(self):
+        """A /16 is sixty-five thousand addresses; probing it is not a search."""
+        found = self.candidates([{"interface": "eth0", "address": "10.0.0.5", "prefix": 16,
+                                  "broadcast": "10.0.255.255", "network": "10.0.0.0/16"}])
+        self.assertNotIn("10.0.200.1", found)
+
+    def test_the_total_is_capped(self):
+        found = self.candidates(self.HOTSPOT)
+        self.assertLessEqual(len(found), discovery.MAX_SWEEP_ADDRESSES)
+
+    def test_remembered_addresses_are_probed_first(self):
+        """A server joined before answers instantly; it should not wait behind
+        fourteen hundred other probes."""
+        found = self.candidates(self.HOTSPOT, extra=["203.0.113.9"])
+        self.assertEqual(found[0], "203.0.113.9")
+
+
+class JoinedServerMemoryTests(unittest.TestCase):
+    """Addresses that worked before are worth asking again."""
+
+    def setUp(self):
+        import tempfile
+        from core.system import registry
+        self.registry = registry
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        home = Path(self.temp.name)
+        self.patches = [
+            patch.object(registry, "CONFIG_DIR", home),
+            patch.object(registry, "JOINED_PATH", home / "joined-servers.json"),
+        ]
+        for item in self.patches: item.start()
+
+    def tearDown(self):
+        for item in self.patches: item.stop()
+        self.temp.cleanup()
+
+    def test_a_joined_server_is_remembered(self):
+        self.registry.remember_joined("192.168.43.99", 5050, "Classroom")
+        self.assertEqual(self.registry.joined_hosts(), ["192.168.43.99"])
+
+    def test_joining_the_same_server_again_does_not_duplicate_it(self):
+        self.registry.remember_joined("192.168.43.99", 5050, "Classroom")
+        self.registry.remember_joined("192.168.43.99", 5050, "Classroom renamed")
+        self.assertEqual(len(self.registry.joined_servers()), 1)
+        self.assertEqual(self.registry.joined_servers()[0]["name"], "Classroom renamed")
+
+    def test_the_most_recent_is_first(self):
+        self.registry.remember_joined("10.0.0.1", 5050, "Old")
+        self.registry.remember_joined("10.0.0.2", 5050, "New")
+        self.assertEqual(self.registry.joined_hosts()[0], "10.0.0.2")
+
+    def test_no_token_is_ever_written_down(self):
+        """The token is the only thing gating membership. It stays in a head."""
+        self.registry.remember_joined("10.0.0.1", 5050, "Classroom")
+        stored = (Path(self.temp.name) / "joined-servers.json").read_text(encoding="utf-8")
+        self.assertNotIn("token", stored.lower())
+
+    def test_the_list_does_not_grow_without_limit(self):
+        for index in range(30):
+            self.registry.remember_joined(f"10.0.0.{index + 1}", 5050, f"S{index}")
+        self.assertLessEqual(len(self.registry.joined_servers()), 20)
+
+
 if __name__ == "__main__":
     unittest.main()

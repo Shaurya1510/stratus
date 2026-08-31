@@ -27,6 +27,7 @@ from pathlib import Path
 
 CONFIG_DIR = Path.home() / ".config" / "stratus"
 REGISTRY_PATH = CONFIG_DIR / "servers.json"
+JOINED_PATH = CONFIG_DIR / "joined-servers.json"
 ACTIVE_PATH = CONFIG_DIR / "active-server.json"
 
 # Server data always lives at <mount>/StratusData/servers/<slug>/
@@ -215,3 +216,38 @@ def running_server() -> dict | None:
     pid = entry.get("pid")
     if not pid: return None
     return entry if Path(f"/proc/{pid}").exists() else None
+
+
+# ------------------------------------------------------------ joined servers
+
+def joined_servers() -> list[dict]:
+    """Servers this device has connected to, most recently used first.
+
+    Separate from `known_servers`, which is about servers hosted on this
+    machine. These belong to other people and are remembered only so they can
+    be found again: an address, a port and a name. No token is ever kept —
+    that is the one thing gating membership, and it stays in the person's head.
+    """
+    entries = _read(JOINED_PATH)
+    if not isinstance(entries, list): return []
+    clean = [item for item in entries if isinstance(item, dict) and item.get("host")]
+    clean.sort(key=lambda item: item.get("last_used", 0), reverse=True)
+    return clean[:20]
+
+
+def remember_joined(host: str, port: int, name: str = "") -> None:
+    if not host: return
+    entries = [item for item in joined_servers()
+               if not (item.get("host") == host and int(item.get("port", 0)) == int(port))]
+    entries.insert(0, {"host": host, "port": int(port), "name": name or host,
+                       "last_used": time.time()})
+    _write(JOINED_PATH, entries[:20])
+
+
+def joined_hosts() -> list[str]:
+    """Just the addresses, for a search to probe directly."""
+    hosts: list[str] = []
+    for item in joined_servers():
+        host = str(item.get("host") or "").strip()
+        if host and host not in hosts: hosts.append(host)
+    return hosts

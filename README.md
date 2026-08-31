@@ -6,7 +6,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20only-1d1740?style=flat-square">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-4a3f9e?style=flat-square">
   <img alt="Bash" src="https://img.shields.io/badge/bash-2%2C767%20lines-2d6a4f?style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-227%20passing-2d6a4f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-243%20passing-2d6a4f?style=flat-square">
   <img alt="Encryption" src="https://img.shields.io/badge/encryption-end--to--end-7ee2a8?style=flat-square">
 </p>
 
@@ -184,34 +184,40 @@ To stop only the hosted applications and leave the server up:
 <details>
 <summary><b>If you cannot see someone else's server</b></summary>
 
-Stratus finds servers by broadcasting on every network this machine is attached
-to. When nothing is found, the Join screen lists **your own addresses** — compare
-them with the host's. If the first three numbers differ, you are not on the same
-network and no search can reach them.
+Stratus searches in two ways, and the second is the one that matters.
 
-The same check from the command line:
+First it **broadcasts** on every network this machine is attached to. That is
+instant when it works — but many phone hotspots deliberately drop broadcasts.
+
+So it then **asks every reachable address directly.** A unicast packet is
+ordinary traffic: it gets routed, it crosses between subnets, and it passes the
+isolation rules that exist specifically to kill broadcasts. It covers your own
+networks plus the ranges a phone or router typically hands out, so **a server on
+a different network is still found** as long as packets can get there. Around
+1,500 addresses, a few seconds, capped so it can never turn into a long scan.
+
+Addresses you have joined before are asked first, so a familiar server appears
+immediately.
+
+From the command line:
 
 ```bash
 ./stratus.sh netcheck --scan
 ```
 
-The three usual causes:
+**The one thing no search can fix** is a machine with no address anything can
+route to:
 
-- **A virtual machine set to NAT.** VMware and VirtualBox default to NAT, which
-  puts the VM on its own private network (often `192.168.x.x` with nothing else
-  on it). Other devices cannot reach it at all. Change the adapter to
-  **Bridged** so the VM joins the real network and gets an address from the same
-  router or hotspot as everyone else.
-- **Phone hotspot client isolation.** Many phones stop connected devices from
-  seeing each other, which blocks Stratus completely — even by direct address.
-  If a direct `ping` between the two machines fails, this is why. Use a normal
-  Wi-Fi router instead.
-- **A firewall.** Discovery is UDP; a firewall can drop it while still allowing
-  ordinary traffic. Open the ports with `./stratus.sh netcheck --fix`.
+- **A virtual machine set to NAT can join, but cannot host.** It can open
+  connections outward, so it finds and joins other people's servers fine. But
+  nothing outside can reach *in*, so nobody will ever see a server you run on
+  it. Change the adapter to **Bridged** if you want to host.
+- **Hotspot client isolation** drops traffic between devices at the network
+  level. If `ping <their address>` fails, nothing running on either machine
+  changes that — use a normal Wi-Fi router.
 
-**You can always type the address by hand.** Ask the host for the address
-Stratus shows on their screen and enter it on the Join screen — that works
-whenever the two machines can reach each other at all.
+**You can always type the address by hand** on the Join screen. Ask the host for
+the address Stratus shows on their screen.
 
 </details>
 
@@ -380,7 +386,7 @@ core/                   The platform
 web/                    The two built-in websites
   ├── chat/             Flask + WebCrypto
   └── drive/            Flask + WebCrypto
-tests/                  227 tests
+tests/                  243 tests
 docs/                   Guide, architecture, hosting, security, testing
 examples/               Two ready-to-deploy sample projects
 ```
@@ -407,7 +413,7 @@ Every folder has its own `README.md` explaining what lives there and why.
 ./stratus.sh test
 ```
 
-227 tests covering the encryption (including **Python ↔ JavaScript interop**,
+243 tests covering the encryption (including **Python ↔ JavaScript interop**,
 proved by running the real browser crypto under Node), the membership rules,
 the wire protocol, archive safety, the sandbox, drive discovery, the terminal
 interface, and every security fix listed above.

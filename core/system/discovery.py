@@ -19,6 +19,17 @@ Three things went wrong in practice and are handled here:
 
 * **One packet is not enough.** UDP has no retransmission, and a hotspot under
   load drops packets freely. The probe is repeated until the deadline.
+
+And when broadcasting fails entirely, it is abandoned: every candidate address
+is probed individually instead. A unicast packet is ordinary traffic. It is
+routed, it crosses between subnets, and it passes the isolation rules that
+exist specifically to drop broadcasts. That is what lets a server on another
+network be found at all.
+
+The one thing nothing here can do is reach a machine that has no address on any
+network the searcher can route to. A virtual machine on NAT is the usual
+example: it can open connections outwards, so it can *join* a server, but
+nothing outside can reach it, so it cannot usefully *host* one.
 """
 from __future__ import annotations
 
@@ -34,6 +45,24 @@ DISCOVERY_MESSAGE = b"STRATUS_DISCOVER_V1"
 # enough that the scan still feels immediate.
 DEFAULT_TIMEOUT = 2.5
 PROBE_INTERVAL = 0.4
+
+# Ranges a phone or laptop hands out when it shares its connection. A machine
+# on its own private network (a NAT virtual machine, say) can still route to
+# these, so probing them finds servers that no broadcast could ever reach.
+COMMON_RANGES = (
+    "192.168.43.0/24",     # Android tethering
+    "172.20.10.0/28",      # iPhone personal hotspot
+    "192.168.137.0/24",    # Windows mobile hotspot / ICS
+    "10.42.0.0/24",        # NetworkManager hotspot (GNOME)
+    "192.168.1.0/24",      # the two commonest home router ranges
+    "192.168.0.0/24",
+)
+
+# A sweep must stay quick and stay polite. A /24 is 254 addresses; this allows
+# a handful of those and refuses to enumerate anything larger, so a /16 route
+# cannot turn a search into a ten-minute scan of sixty thousand machines.
+MAX_SWEEP_ADDRESSES = 1800
+MAX_NETWORK_SIZE = 512
 
 
 def serve_discovery(server_name: str, control_port: int, discovery_port: int, stop: threading.Event) -> None:
@@ -160,3 +189,146 @@ def reachable(host: str, port: int, timeout: float = 1.0) -> bool:
             return True
     except (OSError, ValueError):
         return False
+
+
+def candidate_addresses(deep: bool = True, extra: list[str] | None = None) -> list[str]:
+    """Every address worth probing one by one.
+
+    The networks this machine is on come first, because a server is most often
+    on one of them. `deep` adds the ranges a shared connection typically hands
+    out, which is what finds a server on a network this machine is not itself a
+    member of but can still route to.
+
+    Broadcast and network addresses are skipped — no host answers on those —
+    and so is this machine's own address.
+    """
+    import ipaddress
+
+    from core.system.network import local_interfaces
+
+    try: interfaces = local_interfaces()
+    except Exception: interfaces = []
+
+    mine = {item["address"] for item in interfaces}
+    networks: list[ipaddress.IPv4Network] = []
+    seen_networks: set[str] = set()
+
+    def add_network(text: str) -> None:
+        try: network = ipaddress.ip_network(text, strict=False)
+        except ValueError: return
+        if network.num_addresses > MAX_NETWORK_SIZE: return
+        if str(network) in seen_networks: return
+        seen_networks.add(str(network))
+        networks.append(network)
+
+    for item in interfaces:
+        add_network(item["network"])
+    if deep:
+        for text in COMMON_RANGES:
+            add_network(text)
+
+    addresses: list[str] = []
+    for value in extra or []:
+        if value and value not in mine: addresses.append(value)
+
+    for network in networks:
+        for host in network.hosts():
+            text = str(host)
+            if text in mine: continue
+            addresses.append(text)
+            if len(addresses) >= MAX_SWEEP_ADDRESSES: return addresses
+    return addresses
+
+
+def neighbours() -> list[str]:
+    """Machines this one has already exchanged packets with.
+
+    The kernel keeps them in its neighbour table, so they are known to be
+    present and are worth probing before anything else. On a busy network this
+    finds the answer long before a full sweep would.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(["ip", "-4", "neigh", "show"],
+                                capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found = []
+    for line in (result.stdout or "").splitlines():
+        parts = line.split()
+        if not parts: continue
+        if "FAILED" in line or "INCOMPLETE" in line: continue
+        found.append(parts[0])
+    return found
+
+
+def sweep(addresses: list[str], discovery_port: int, timeout: float,
+          results: dict | None = None) -> dict:
+    """Probe each address directly and collect whatever answers.
+
+    Unicast, so the operating system routes each packet by its destination and
+    no interface juggling is needed. Probes go out in bursts with a short pause
+    between them: firing fifteen hundred datagrams at once makes a phone drop
+    most of them, which would defeat the entire point.
+    """
+    found = results if results is not None else {}
+    if not addresses: return found
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setblocking(False)
+    deadline = time.monotonic() + timeout
+    burst = 120
+
+    def collect() -> None:
+        while True:
+            readable, _, _ = select.select([sock], [], [], 0)
+            if not readable: return
+            try: data, address = sock.recvfrom(4096)
+            except OSError: return
+            try:
+                item = json.loads(data)
+                item["host"] = address[0]
+                item["found_by"] = "direct"
+                found[(address[0], int(item["control_port"]))] = item
+            except (ValueError, KeyError, TypeError):
+                continue
+
+    try:
+        for start in range(0, len(addresses), burst):
+            if time.monotonic() >= deadline: break
+            for address in addresses[start:start + burst]:
+                try: sock.sendto(DISCOVERY_MESSAGE, (address, discovery_port))
+                except OSError: continue
+            time.sleep(0.05)
+            collect()
+
+        # Keep listening after the last burst: a reply is always slower than
+        # the send that provoked it.
+        while time.monotonic() < deadline:
+            readable, _, _ = select.select([sock], [], [], 0.1)
+            if readable: collect()
+    finally:
+        sock.close()
+    return found
+
+
+def discover_everywhere(discovery_port: int = 5051, timeout: float = 4.0,
+                        deep: bool = True, extra: list[str] | None = None) -> list[dict]:
+    """Find servers whether or not they are on this machine's own network.
+
+    Broadcast first, because it is instant and costs one packet. Then every
+    address individually, which is what works when the network refuses to carry
+    a broadcast — the usual reason two people on one phone hotspot cannot see
+    each other.
+    """
+    results: dict[tuple[str, int], dict] = {}
+    for item in discover(discovery_port, timeout=min(timeout / 3, 1.2)):
+        item.setdefault("found_by", "broadcast")
+        results[(item["host"], int(item["control_port"]))] = item
+
+    known = neighbours()
+    addresses = candidate_addresses(deep=deep, extra=(extra or []) + known)
+    remaining = max(timeout - min(timeout / 3, 1.2), 1.0)
+    sweep(addresses, discovery_port, remaining, results)
+    return list(results.values())

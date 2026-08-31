@@ -1405,25 +1405,64 @@ class JoinScreen(Screen):
 
     @work(thread=True, exclusive=True, group="discover")
     def scan(self) -> None:
-        from core.system.discovery import discover
+        """Search broadly, and show the quick answer before the slow one.
+
+        Broadcast answers in a moment when it works at all, so those servers
+        are put on screen immediately rather than making the user wait for the
+        full search behind them. The wider sweep then adds anything broadcast
+        could not reach, which on a phone hotspot is usually everything.
+        """
+        from core.system.discovery import discover_everywhere, discover
         from core.system.network import local_interfaces
         try: interfaces = local_interfaces()
         except Exception: interfaces = []
-        try: servers = discover(self.discovery_port)
-        except Exception as exc:
-            self.call_ui(self.status, f"Discovery unavailable ({exc}). Enter an address manually.", "warn"); return
-        self.call_ui(self.render_servers, servers, interfaces)
 
-    def render_servers(self, servers: list[dict], interfaces: list[dict] | None = None) -> None:
+        try:
+            quick = discover(self.discovery_port, timeout=1.0)
+        except Exception:
+            quick = []
+        if quick:
+            self.call_ui(self.render_servers, quick, interfaces, True)
+
+        try:
+            servers = discover_everywhere(self.discovery_port, timeout=6.0,
+                                          extra=self.remembered_hosts())
+        except Exception as exc:
+            if quick: return
+            self.call_ui(self.status, f"Discovery unavailable ({exc}). Enter an address manually.", "warn"); return
+        self.call_ui(self.render_servers, servers, interfaces, False)
+
+    def remembered_hosts(self) -> list[str]:
+        """Addresses that worked before.
+
+        A server already joined once is worth asking directly: it costs one
+        packet, and it answers instantly on a network where nothing else does.
+        """
+        try:
+            from core.system.registry import joined_hosts
+            return joined_hosts()
+        except Exception:
+            return []
+
+    def render_servers(self, servers: list[dict], interfaces: list[dict] | None = None,
+                       searching: bool = False) -> None:
         self.servers = servers
         self.interfaces = interfaces or []
         listing = self.query_one("#server-list", OptionList); listing.clear_options()
         if not servers:
-            self.explain_empty()
+            if searching:
+                self.status("Searching every reachable network…")
+            else:
+                self.explain_empty()
             return
-        listing.add_options([Option(f"{item['name']}  —  {item['host']}:{item['control_port']}", id=str(index)) for index, item in enumerate(servers)])
+        listing.add_options([
+            Option(f"{item['name']}  —  {item['host']}:{item['control_port']}", id=str(index))
+            for index, item in enumerate(servers)])
         listing.highlighted = 0
-        self.status(f"Found {len(servers)} server(s). Choose one, then enter the token.", "good")
+        if searching:
+            self.status(f"Found {len(servers)} so far, still searching…", "good")
+        else:
+            self.status(f"Found {len(servers)} server(s). Choose one, then enter the token.", "good")
 
     def explain_empty(self) -> None:
         """Say which network this device is actually on, and what usually breaks.
@@ -1451,8 +1490,9 @@ class JoinScreen(Screen):
         lines += [
             "",
             "[bold]Common causes[/]",
-            "[dim]• A virtual machine set to NAT has its own private network.[/]",
-            "[dim]  Change its adapter to Bridged so it joins the real one.[/]",
+            "[dim]• A virtual machine set to NAT can reach out, so it can join[/]",
+            "[dim]  a server — but nothing can reach in, so it cannot host one.[/]",
+            "[dim]  Change its adapter to Bridged to host from it.[/]",
             "[dim]• Phone hotspots often block devices from seeing each other[/]",
             "[dim]  (client isolation). Try a normal Wi-Fi router.[/]",
             "[dim]• A firewall may drop the search while letting traffic through.[/]",
@@ -1490,8 +1530,18 @@ class JoinScreen(Screen):
         except Exception as exc:
             self.call_ui(self.status, f"Could not join: {exc}", "bad")
             self.call_ui(self.focus_token); return
+        label = ""
         for name in self.servers:
-            if name["host"] == host: session.server_name = f"{name['name']} ({host}:{port})"
+            if name["host"] == host:
+                label = name["name"]
+                session.server_name = f"{label} ({host}:{port})"
+        # Written down only after the token was accepted, so a mistyped address
+        # never joins the list of places worth searching.
+        try:
+            from core.system.registry import remember_joined
+            remember_joined(host, port, label)
+        except Exception:
+            pass
         self.call_ui(self.enter, session)
 
     def focus_token(self) -> None: self.query_one("#join-token", Input).focus()

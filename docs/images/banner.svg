@@ -43,7 +43,7 @@
     <rect class="chip" x="288" y="0" width="132" height="26" rx="13"/>
     <text x="354" y="17" class="chipT" text-anchor="middle">2767 lines Bash</text>
     <rect class="chip" x="430" y="0" width="112" height="26" rx="13"/>
-    <text x="486" y="17" class="chipT" text-anchor="middle">227 tests</text>
+    <text x="486" y="17" class="chipT" text-anchor="middle">243 tests</text>
   </g>
 
   <text x="55" y="216" class="meta">CSET-213 · LINUX &amp; SHELL PROGRAMMING · BENNETT UNIVERSITY</text>

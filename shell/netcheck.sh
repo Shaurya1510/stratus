@@ -173,7 +173,7 @@ if (( SCAN )); then
     ( cd "$STRATUS_ROOT" && "${STRATUS_PYTHON:-python3}" - "$DISCOVERY_PORT" <<'PYTHON'
 import sys
 sys.path.insert(0, ".")
-from core.system.discovery import discover
+from core.system.discovery import discover_everywhere
 from core.system.network import local_interfaces
 
 port = int(sys.argv[1])
@@ -186,19 +186,24 @@ if not interfaces:
     print("    (no usable network address)")
 
 print()
-found = discover(port)
+found = discover_everywhere(port, timeout=8.0)
 if not found:
-    print("  No servers answered.")
+    print("  No servers answered, by broadcast or by direct probe.")
     print()
-    print("  Compare the addresses above with the host's address.")
-    print("  If the first three numbers differ, you are on different networks:")
-    print("    - a virtual machine set to NAT has its own private network;")
-    print("      change its adapter to Bridged to join the real one")
-    print("    - phone hotspots often stop devices seeing each other")
+    print("  Every address on the networks above was asked individually, plus")
+    print("  the ranges a phone or router usually hands out. Nothing replied.")
+    print()
+    print("  That leaves two possibilities:")
+    print("    - no server is running")
+    print("    - this network stops devices reaching each other at all")
+    print("      (phone hotspot client isolation). Test it with:")
+    print("          ping <the other machine>")
+    print("      If that fails too, nothing here can help: use another network.")
     raise SystemExit(0)
 
 for item in sorted(found, key=lambda entry: entry.get("host", "")):
-    print(f"  {item.get('name', 'unnamed'):<30} {item.get('host')}:{item.get('control_port', '?')}")
+    how = item.get("found_by", "broadcast")
+    print(f"  {item.get('name', 'unnamed'):<30} {item.get('host')}:{item.get('control_port', '?')}  [{how}]")
 PYTHON
     ) || warn "The scan could not be completed"
 
