@@ -65,13 +65,41 @@ MAX_SWEEP_ADDRESSES = 1800
 MAX_NETWORK_SIZE = 512
 
 
-def serve_discovery(server_name: str, control_port: int, discovery_port: int, stop: threading.Event) -> None:
+def _visible_to(address: str, visible) -> bool:
+    """Whether a device at this address may see the server at all.
+
+    `visible` is None for "every network", or a list of networks the host
+    chose. Loopback always sees it, so the host's own tools keep working.
+    """
+    if not visible: return True
+    import ipaddress
+    try: candidate = ipaddress.ip_address(address)
+    except ValueError: return False
+    if candidate.is_loopback: return True
+    return any(candidate in network for network in visible)
+
+
+def _parse_visible(visible):
+    import ipaddress
+    if not visible: return None
+    networks = []
+    for text in visible:
+        try: networks.append(ipaddress.ip_network(str(text), strict=False))
+        except ValueError: continue
+    return networks or None
+
+
+def serve_discovery(server_name: str, control_port: int, discovery_port: int, stop: threading.Event,
+                    visible=None, extra: dict | None = None) -> None:
     """Answer probes until told to stop.
 
     Bound to 0.0.0.0 so a probe arriving on any interface is heard, and the
     reply goes back to the address it came from, which is already unicast and
-    needs no broadcast permission.
+    needs no broadcast permission. When the host limited the server to one
+    network, probes from anywhere else are ignored: the server stays invisible
+    there rather than showing up and then refusing the join.
     """
+    networks = _parse_visible(visible)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
@@ -88,12 +116,152 @@ def serve_discovery(server_name: str, control_port: int, discovery_port: int, st
             except socket.timeout: continue
             except OSError: continue
             if message.strip() != DISCOVERY_MESSAGE: continue
+            if not _visible_to(address[0], networks): continue
             payload = json.dumps({"protocol": 1, "name": server_name,
-                                  "control_port": control_port}).encode()
+                                  "control_port": control_port, **(extra or {})}).encode()
             try: sock.sendto(payload, address)
             except OSError: continue
     finally:
         sock.close()
+
+
+# ------------------------------------------------------------------ announcing
+#
+# Answering probes only works when the joiner's probe arrives. A host that
+# also *announces* itself every couple of seconds is seen by anyone who is
+# simply listening, which is what makes a server appear on a Join screen by
+# itself, the way a Wi-Fi network appears in a phone's list.
+#
+# Each announcement goes three ways at once: the subnet-directed broadcast of
+# every chosen network, the limited broadcast, and a multicast group. Phone
+# hotspots and campus Wi-Fi each drop a different one of those; very few drop
+# all three.
+
+ANNOUNCE_MESSAGE = "STRATUS_HERE_V1"
+ANNOUNCE_PORT = 5052
+ANNOUNCE_GROUP = "239.255.80.52"
+ANNOUNCE_INTERVAL = 2.0
+
+
+def announcement(server_name: str, control_port: int, extra: dict | None = None) -> bytes:
+    return json.dumps({"kind": ANNOUNCE_MESSAGE, "protocol": 1, "name": server_name,
+                       "control_port": control_port, **(extra or {})}).encode()
+
+
+def _announce_targets(visible) -> list[tuple[str, list[str]]]:
+    """Which local addresses to announce from, and where to send each time."""
+    import ipaddress
+    from core.system.network import local_interfaces
+
+    networks = _parse_visible(visible)
+    try: interfaces = local_interfaces()
+    except Exception: interfaces = []
+    targets = []
+    for item in interfaces:
+        try: address = ipaddress.ip_address(item["address"])
+        except (KeyError, ValueError): continue
+        if networks and not any(address in network for network in networks): continue
+        destinations = [item["broadcast"]] if item.get("broadcast") else []
+        destinations.append(ANNOUNCE_GROUP)
+        if not networks: destinations.append("255.255.255.255")
+        targets.append((item["address"], destinations))
+    return targets
+
+
+def announce_forever(server_name: str, control_port: int, stop: threading.Event, visible=None,
+                     extra: dict | None = None, port: int = ANNOUNCE_PORT,
+                     interval: float = ANNOUNCE_INTERVAL) -> None:
+    """Tell every chosen network that this server exists, until told to stop.
+
+    The interface list is read again every few rounds, so a laptop that joins
+    a Wi-Fi network after the server started begins announcing there too.
+    """
+    payload = announcement(server_name, control_port, extra)
+    rounds = 0
+    targets: list[tuple[str, list[str]]] = []
+    while not stop.is_set():
+        if rounds % 5 == 0: targets = _announce_targets(visible)
+        rounds += 1
+        for source, destinations in targets:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+                try: sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(source))
+                except OSError: pass
+                sock.bind((source, 0))
+            except OSError:
+                continue
+            try:
+                for destination in destinations:
+                    try: sock.sendto(payload, (destination, port))
+                    except OSError: continue
+            finally:
+                sock.close()
+        stop.wait(interval)
+
+
+def listen_for_announcements(on_server, stop: threading.Event, port: int = ANNOUNCE_PORT) -> None:
+    """Call `on_server(item)` for every announcement heard, until stopped.
+
+    Joins the multicast group on every local interface, because a membership
+    on the default interface alone never hears a group on the Wi-Fi when the
+    default route is a cable.
+    """
+    from core.system.network import local_interfaces
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if hasattr(socket, "SO_REUSEPORT"):
+        try: sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except OSError: pass
+    try:
+        sock.bind(("", port))
+    except OSError:
+        sock.close(); return
+    try: interfaces = local_interfaces()
+    except Exception: interfaces = []
+    joined = False
+    for item in interfaces:
+        try:
+            membership = socket.inet_aton(ANNOUNCE_GROUP) + socket.inet_aton(item["address"])
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, membership)
+            joined = True
+        except (OSError, KeyError):
+            continue
+    if not joined:
+        try:
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                            socket.inet_aton(ANNOUNCE_GROUP) + socket.inet_aton("0.0.0.0"))
+        except OSError:
+            pass
+    sock.settimeout(0.5)
+    try:
+        while not stop.is_set():
+            try: data, address = sock.recvfrom(4096)
+            except socket.timeout: continue
+            except OSError: continue
+            item = parse_announcement(data, address[0])
+            if item is not None:
+                try: on_server(item)
+                except Exception: pass
+    finally:
+        sock.close()
+
+
+def parse_announcement(data: bytes, source: str) -> dict | None:
+    try:
+        item = json.loads(data)
+        if not isinstance(item, dict) or item.get("kind") != ANNOUNCE_MESSAGE: return None
+        port = int(item["control_port"])
+        if not 0 < port < 65536: return None
+    except (ValueError, KeyError, TypeError):
+        return None
+    clean = {key: item[key] for key in ("name", "visibility", "network_title", "public_address")
+             if isinstance(item.get(key), str)}
+    clean["name"] = str(clean.get("name") or "Stratus Server")[:80]
+    clean.update({"protocol": 1, "control_port": port, "host": source, "found_by": "announcement"})
+    return clean
 
 
 def _probe_targets(discovery_port: int) -> list[tuple[str | None, list[str]]]:

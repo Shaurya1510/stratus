@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 
 
 def lan_address(fallback: str = "127.0.0.1") -> str:
@@ -221,3 +222,175 @@ def same_network(first: str, second: str, prefix: int = 24) -> bool:
     except ValueError:
         return False
     return two in one.network
+
+
+# ------------------------------------------------------------ choosing a network
+
+# Interfaces that belong to software on this machine rather than to a network
+# anyone else is on. Offering "docker0" as a place to host a server would only
+# confuse the person choosing.
+VIRTUAL_PREFIXES = ("docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "lxc", "lxd", "cni", "flannel", "podman")
+VPN_PREFIXES = ("tun", "tap", "wg", "tailscale", "zt", "ppp")
+
+
+def _wifi_name(interface: str) -> str:
+    """The Wi-Fi network (SSID) an interface is connected to, if it is Wi-Fi.
+
+    Three tools are tried because no single one is installed everywhere:
+    NetworkManager's nmcli on most desktops, iw on minimal installs, and the
+    older iwgetid from wireless-tools.
+    """
+    import subprocess
+
+    attempts = (
+        ["nmcli", "-t", "-g", "GENERAL.CONNECTION", "device", "show", interface],
+        ["iwgetid", interface, "--raw"],
+    )
+    for command in attempts:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        name = (result.stdout or "").strip().splitlines()[0:1]
+        if result.returncode == 0 and name and name[0] and name[0] != "--":
+            return name[0].strip()
+    try:
+        result = subprocess.run(["iw", "dev", interface, "link"], capture_output=True, text=True, timeout=3)
+        for line in (result.stdout or "").splitlines():
+            if line.strip().startswith("SSID:"):
+                return line.split(":", 1)[1].strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ""
+
+
+def classify_interface(name: str) -> str:
+    """wifi, ethernet, vpn, virtual or other — judged from the kernel's name.
+
+    Modern Linux names interfaces predictably: wl* is wireless, en*/eth* is
+    wired. /sys is checked as well because a renamed interface keeps its
+    wireless directory there.
+    """
+    lowered = (name or "").lower()
+    if lowered.startswith(VIRTUAL_PREFIXES): return "virtual"
+    if lowered.startswith(VPN_PREFIXES): return "vpn"
+    if lowered.startswith(("wl", "wlan", "ath", "ra")) or Path(f"/sys/class/net/{name}/wireless").exists():
+        return "wifi"
+    if lowered.startswith(("en", "eth", "em", "eno", "ens", "enp", "usb")): return "ethernet"
+    return "other"
+
+
+KIND_LABELS = {"wifi": "Wi-Fi", "ethernet": "LAN cable", "vpn": "VPN", "virtual": "Virtual", "other": "Network"}
+
+
+def network_choices(include_virtual: bool = False) -> list[dict]:
+    """Every network a host could make its server visible on, in plain words.
+
+    One entry per attached IPv4 network: what kind it is, its Wi-Fi name when
+    it has one, and the address people on it would connect to. The person
+    hosting picks from these instead of typing addresses, which is the whole
+    point: "Wi-Fi · Bennett-Campus" means something, "10.12.4.0/22" does not.
+    """
+    choices = []
+    for item in local_interfaces():
+        kind = classify_interface(item.get("interface", ""))
+        if kind == "virtual" and not include_virtual: continue
+        ssid = _wifi_name(item["interface"]) if kind == "wifi" else ""
+        title = KIND_LABELS.get(kind, "Network")
+        if ssid: title = f"{title} · {ssid}"
+        choices.append({**item, "kind": kind, "ssid": ssid, "title": title,
+                        "label": f"{title}  ({item['address']} on {item['network']})"})
+    order = {"wifi": 0, "ethernet": 1, "other": 2, "vpn": 3, "virtual": 4}
+    choices.sort(key=lambda entry: order.get(entry["kind"], 9))
+    return choices
+
+
+# Where a server can be seen. "network" keeps it to the one network the host
+# picked, "all" to every network this machine is attached to. Independently of
+# that, a server is either listed (public: it appears on everyone's Join
+# screen) or unlisted (private: it is reached only by its join code).
+VISIBILITY_MODES = ("network", "all")
+
+
+def normalise_visibility(value) -> dict:
+    """A visibility setting with every field present and nothing malformed."""
+    import ipaddress
+
+    value = value if isinstance(value, dict) else {}
+    mode = value.get("mode") if value.get("mode") in VISIBILITY_MODES else "all"
+    result = {"mode": mode, "network": "", "address": "", "title": str(value.get("title") or "")[:80],
+              "listed": value.get("listed", True) is not False,
+              "approve_joins": bool(value.get("approve_joins", False))}
+    if mode == "network":
+        try:
+            result["network"] = str(ipaddress.ip_network(str(value.get("network")), strict=False))
+            result["address"] = str(ipaddress.ip_address(str(value.get("address"))))
+        except ValueError:
+            # A setting that cannot be understood widens to every local network
+            # rather than hiding the server from everyone.
+            result["mode"] = "all"
+    return result
+
+
+def describe_visibility(value) -> str:
+    setting = normalise_visibility(value)
+    where = (f"{setting['title'] or 'one network'} ({setting['network']})" if setting["mode"] == "network"
+             else "every network this computer is on")
+    kind = "public, listed on" if setting["listed"] else "private, reachable only by join code on"
+    return f"{kind} {where}"
+
+
+# ---------------------------------------------------------------- join codes
+#
+# A private server is not listed, so people need some way to reach it that is
+# easier to read out across a classroom than "192.168.43.117 port 5050". The
+# address and port are packed into six bytes and written in Crockford's
+# base32, which has no I, L, O or U, so nothing can be misheard or misread:
+# 192.168.43.117:5050 becomes "60N0-NQA4-XT".
+#
+# A code is not a secret. It is only an address. The password (join token) is
+# what keeps a private server private.
+
+_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def join_code(address: str, port: int) -> str:
+    import ipaddress
+    packed = int(ipaddress.IPv4Address(address)) << 16 | (int(port) & 0xFFFF)
+    characters = []
+    for _ in range(10):
+        characters.append(_CODE_ALPHABET[packed & 31]); packed >>= 5
+    text = "".join(reversed(characters))
+    return f"{text[:4]}-{text[4:8]}-{text[8:]}"
+
+
+def parse_join_code(code: str) -> tuple[str, int] | None:
+    """The address and port a join code names, or None if it is not one."""
+    import ipaddress
+    text = (code or "").upper().replace("-", "").replace(" ", "")
+    text = text.replace("O", "0").replace("I", "1").replace("L", "1")
+    if len(text) != 10 or any(ch not in _CODE_ALPHABET for ch in text): return None
+    packed = 0
+    for ch in text: packed = packed * 32 + _CODE_ALPHABET.index(ch)
+    if packed >> 48: return None
+    port = packed & 0xFFFF
+    if not port: return None
+    return str(ipaddress.IPv4Address(packed >> 16)), port
+
+
+def parse_join_target(text: str, default_port: int = 5050) -> tuple[str, int] | None:
+    """Accept a join code, "address", or "address:port" from the Join screen."""
+    import ipaddress
+    text = (text or "").strip()
+    if not text: return None
+    decoded = parse_join_code(text)
+    if decoded: return decoded
+    host, _, port = text.rpartition(":") if text.count(":") == 1 else (text, "", "")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not host or " " in host: return None
+    try: number = int(port) if port else int(default_port)
+    except ValueError: return None
+    if not 0 < number < 65536: return None
+    return host, number

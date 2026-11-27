@@ -46,24 +46,30 @@ class Session:
                 except OSError: pass
                 self.socket = None
 
-    def _exchange(self, request: dict) -> dict:
+    def _exchange(self, request: dict, upload=None, download=None) -> dict:
         connection = self.socket or self.connect()
-        send_message(connection, request)
-        return receive_message(connection)
+        send_message(connection, request, upload)
+        return receive_message(connection, download)
 
-    def call(self, action: str, **extra):
+    def call(self, action: str, upload_progress=None, download_progress=None, **extra):
+        """Send one request and return its answer.
+
+        The two progress callbacks, when given, are called as `(done, total)`
+        bytes while the request goes out and while the answer comes back.
+        That is how the Drive shows a live transfer speed.
+        """
         request = {"action": action, "token": self.token, "device": self.public}
         request.update(extra)
         with self.lock:
             started = time.perf_counter()
             try:
-                reply = self._exchange(request)
+                reply = self._exchange(request, upload_progress, download_progress)
             except (OSError, ConnectionError, ValueError):
                 # A reused connection can be closed by the host, a sleeping
                 # laptop, or a roaming access point. Reconnect once and retry
                 # so the interface never shows an error for a stale socket.
                 self.close()
-                reply = self._exchange(request)
+                reply = self._exchange(request, upload_progress, download_progress)
             self.latency_ms = (time.perf_counter() - started) * 1000
         if not reply.get("ok"):
             raise RuntimeError(reply.get("error", "request failed"))

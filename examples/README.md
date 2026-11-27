@@ -1,7 +1,16 @@
 # Examples
 
-Two small projects that deploy to a Stratus server exactly as they are. Copy
-either one, change what it serves, and upload it from the Apps screen.
+Five small projects that deploy to a Stratus server exactly as they are. Each
+one appears on the **Send a Project** screen, so showing one off is a single
+click. Copy any of them, change what it serves, and send your own.
+
+| Folder | Runtime | What it shows |
+|---|---|---|
+| `class-quiz` | python | A five-question Linux quiz with a shared scoreboard kept in the app's data folder. Standard library only |
+| `notes-board` | static | A sticky-notes page; notes stay in the visitor's browser |
+| `live-counter` | node | A visitor counter that updates live in every open browser (server-sent events). No dependencies |
+| `hello-static` | static | The smallest site that works |
+| `hello-node` | node | A Node server with a real install step |
 
 Every deployable project needs a `stratus.yaml` at its top level. That file is
 the whole contract between a project and the host.

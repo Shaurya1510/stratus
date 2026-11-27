@@ -163,7 +163,14 @@ class Database:
             self.event(deployment_id, status, f"pid={pid or ''}")
             self.conn.commit()
 
-    def register_device(self, device: dict) -> dict:
+    def register_device(self, device: dict, needs_approval: bool = False) -> dict:
+        """Record a device, or refresh one already known.
+
+        With `needs_approval`, a device seen for the first time is stored as
+        waiting: it exists, so the host can see who is asking, but it cannot
+        read or send anything until the host accepts it. Devices already known
+        keep whatever state they had.
+        """
         required = ("id", "display_name", "hostname", "platform", "secret", "ecdh_public_key")
         if any(not device.get(key) for key in required):
             raise ValueError("incomplete device identity")
@@ -174,12 +181,12 @@ class Database:
             existing = self.conn.execute("SELECT * FROM devices WHERE id=?", (device["id"],)).fetchone()
             if existing and existing["secret_hash"] != secret_hash:
                 raise ValueError("device authentication failed")
-            self.conn.execute("""INSERT INTO devices(id,display_name,hostname,platform,secret_hash,encryption_public_key,ecdh_public_key)
-              VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
+            self.conn.execute("""INSERT INTO devices(id,display_name,hostname,platform,secret_hash,encryption_public_key,ecdh_public_key,approved)
+              VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
               hostname=excluded.hostname,platform=excluded.platform,encryption_public_key=excluded.encryption_public_key,
               ecdh_public_key=excluded.ecdh_public_key,last_seen=CURRENT_TIMESTAMP""",
               (device["id"], device["display_name"][:80], device["hostname"][:80], device["platform"][:40], secret_hash,
-               device.get("encryption_public_key"), device["ecdh_public_key"]))
+               device.get("encryption_public_key"), device["ecdh_public_key"], 0 if needs_approval else 1))
             self.conn.commit()
             registered = dict(self.conn.execute("SELECT id,display_name,hostname,platform,first_seen,last_seen,approved,blocked FROM devices WHERE id=?", (device["id"],)).fetchone())
         server_root = self.path.parent.parent
@@ -188,6 +195,23 @@ class Database:
             (user_root / name).mkdir(parents=True, exist_ok=True)
         (user_root / "profile.json").write_text(json.dumps(registered, indent=2), encoding="utf-8")
         return registered
+
+    def join_requests(self) -> list[dict]:
+        """Devices that asked to join and are waiting for the host."""
+        with self.lock:
+            return [dict(row) for row in self.conn.execute(
+                "SELECT id,display_name,hostname,platform,first_seen,last_seen FROM devices "
+                "WHERE approved=0 AND blocked=0 ORDER BY first_seen")]
+
+    def decide_join(self, device_id: str, accept: bool) -> dict:
+        """Let a waiting device in, or turn it away for good."""
+        with self.lock:
+            row = self.conn.execute("SELECT id FROM devices WHERE id=?", (device_id,)).fetchone()
+            if not row: raise ValueError("device not found")
+            if accept: self.conn.execute("UPDATE devices SET approved=1, blocked=0 WHERE id=?", (device_id,))
+            else: self.conn.execute("UPDATE devices SET blocked=1 WHERE id=?", (device_id,))
+            self.conn.commit()
+        return {"status": "ACCEPTED" if accept else "REJECTED"}
 
     def list_devices(self) -> list[dict]:
         with self.lock:

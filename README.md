@@ -6,7 +6,7 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20only-1d1740?style=flat-square">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-4a3f9e?style=flat-square">
   <img alt="Bash" src="https://img.shields.io/badge/bash-2%2C767%20lines-2d6a4f?style=flat-square">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-259%20passing-2d6a4f?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-274%20passing-2d6a4f?style=flat-square">
   <img alt="Encryption" src="https://img.shields.io/badge/encryption-end--to--end-7ee2a8?style=flat-square">
 </p>
 
@@ -149,8 +149,8 @@ server created yet*. Both are created the first time you host or join.
 
 That is the whole thing. One command opens a full-screen interface that walks
 you through hosting a server or joining someone else's — choosing a drive,
-naming the server, setting a join token, and picking how much of the machine
-guests may use.
+naming the server, picking the network it runs on, setting a password, and
+picking how much of the machine guests may use.
 
 ### 5. Stopping it
 
@@ -225,6 +225,30 @@ the address Stratus shows on their screen.
 
 ## What you can do with it
 
+### Choose the network, and who gets in
+
+When you host, Stratus lists the networks this computer is on by name —
+**"Wi-Fi · Bennett-Campus"**, **"LAN cable"** — and you click one (or *All
+networks*). No addresses to type. The server then runs only on that network.
+
+| Server type | Who sees it | How people join |
+|---|---|---|
+| **Public** | Everyone on that network — it appears on their Join screen by itself | Click it. Enter the password if you set one |
+| **Private** | Nobody — it answers no searches and announces nothing | Type the **join code** (like `60N0-NQA4-XT`) and the password |
+
+Either type can also be set to **"I accept each person who asks to join"**.
+A new device then waits at the door; the host sees *who* is asking in the
+**Join requests** tab and presses **Let In** or **Turn Away**. A device that is
+waiting receives nothing — no messages are even encrypted for it.
+
+A public server *announces* itself on the chosen network every two seconds
+(subnet broadcast, limited broadcast and multicast at once, because hotspots
+and campus Wi-Fi each drop a different one), so a server shows up on the Join
+screen the moment it starts, the way a Wi-Fi network shows up on a phone.
+
+A join code is just the address and port written in an alphabet with no
+easily-confused letters. It is not a secret: the password is.
+
 ### Encrypted chat
 
 - **General**, **group**, and **one-to-one** conversations
@@ -233,6 +257,9 @@ the address Stratus shows on their screen.
   different place
 - **Attachments** from either side, encrypted for exactly the people in that
   conversation
+- **Instant delivery** — a second connection waits on the host and is woken the
+  moment anyone sends a message, so replies appear immediately instead of on
+  the next poll
 - Unread badges, date separators, grouped message runs
 - A line at the top of every conversation naming **exactly who can read it**,
   because that is the whole point
@@ -242,6 +269,8 @@ the address Stratus shows on their screen.
 ### Encrypted drive
 
 - Upload anything up to 10 MB; **filenames are encrypted too**, not just contents
+- **Live transfer meter** — a progress bar with the real speed (MB/s) and time
+  left for every upload, download and chat attachment
 - Four scopes: **private**, **everyone on the server**, **one person**, or **a group**
 - Create groups and pick members while you are sharing, not in a separate screen
 - Navigate by **who a file is shared with** — your own files, a specific person,
@@ -263,8 +292,13 @@ start: python3 -m http.server $PORT
   (`pip install`, `npm ci`, and your own `build:` command)
 - **A live URL on the local network**, ready in seconds
 - **Start, stop, restart and read live logs** from the interface
-- **Host approval** — you see what an upload does before it runs
-- Two working examples in [`examples/`](examples/) to copy from
+- **Send a project, the host decides** — a member sends a folder, the host sees
+  what it contains and what it does, and approves or denies it
+- **Checked before it is sent** — the Send screen shows the manifest, size and
+  the same warnings the host will see, so nothing is a surprise
+- **Five demo projects** in [`examples/`](examples/), one click away on the
+  Send screen: a Linux quiz with a scoreboard (Python), a notes board (static),
+  a live visitor counter (Node), and two hello-world starters
 
 ### Running the machine
 
@@ -386,7 +420,7 @@ core/                   The platform
 web/                    The two built-in websites
   ├── chat/             Flask + WebCrypto
   └── drive/            Flask + WebCrypto
-tests/                  259 tests
+tests/                  274 tests
 docs/                   Guide, architecture, hosting, security, testing
 examples/               Two ready-to-deploy sample projects
 ```
@@ -413,7 +447,7 @@ Every folder has its own `README.md` explaining what lives there and why.
 ./stratus.sh test
 ```
 
-259 tests covering the encryption (including **Python ↔ JavaScript interop**,
+274 tests covering the encryption (including **Python ↔ JavaScript interop**,
 proved by running the real browser crypto under Node), the membership rules,
 the wire protocol, archive safety, the sandbox, drive discovery, the terminal
 interface, and every security fix listed above.

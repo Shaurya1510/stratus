@@ -329,6 +329,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         interfaces = [{"interface": "eth0", "address": "192.168.226.130", "prefix": 24,
                        "broadcast": "192.168.226.255", "network": "192.168.226.0/24"}]
         with patch("core.system.discovery.discover", return_value=[]),\
+             patch("core.system.discovery.discover_everywhere", return_value=[]),\
              patch("core.system.network.local_interfaces", return_value=interfaces):
             app = ClientTUI()
             async with app.run_test(size=(140, 45)) as pilot:
@@ -354,6 +355,7 @@ class TuiTests(unittest.IsolatedAsyncioTestCase):
         """The explanation is rendered into the server list, so none of those
         lines may be selectable — choosing one would index into an empty list."""
         with patch("core.system.discovery.discover", return_value=[]),\
+             patch("core.system.discovery.discover_everywhere", return_value=[]),\
              patch("core.system.network.local_interfaces", return_value=[]):
             app = ClientTUI()
             async with app.run_test(size=(140, 45)) as pilot:
