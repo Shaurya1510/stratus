@@ -1,0 +1,6 @@
+name: Class Quiz
+runtime: python
+start: python3 app.py
+port_env: PORT
+persistent_data: data
+auto_start: false

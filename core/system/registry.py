@@ -196,7 +196,7 @@ def active_server() -> dict | None:
 
 def set_active(server: dict) -> None:
     _write(ACTIVE_PATH, server)
-    remember({key: server[key] for key in ("name", "storage", "token", "port") if key in server})
+    remember({key: server[key] for key in ("name", "storage", "token", "port", "visibility") if key in server})
 
 
 def clear_active() -> None:

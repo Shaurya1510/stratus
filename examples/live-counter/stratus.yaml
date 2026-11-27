@@ -1,0 +1,6 @@
+name: Live Counter
+runtime: node
+start: node server.js
+port_env: PORT
+persistent_data: data
+auto_start: false

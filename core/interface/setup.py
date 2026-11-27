@@ -55,7 +55,7 @@ def echo_startup(log_path: Path, seconds: float = 12.0) -> None:
     importantly, sees anything that went wrong instead of a silent prompt.
     """
     interesting = ("Installing built-in", "Updating built-in", "failed", "Error", "error",
-                   "listening on", "reach it at", "Traceback")
+                   "listening on", "reach it at", "Visible to", "Join code", "Traceback")
     shown: set[str] = set()
     deadline = time.monotonic() + seconds
     settled = 0
@@ -73,7 +73,33 @@ def echo_startup(log_path: Path, seconds: float = 12.0) -> None:
         time.sleep(0.4)
 
 
-def launch(root: Path, name: str, server_root: Path, token: str, port: int, preset: str | None) -> None:
+def visibility_arguments(visibility: dict | None) -> list[str]:
+    """Command-line flags for the server, from the choice made on the Host screen.
+
+    A network the host picked last time may not exist today: the laptop is on
+    a different Wi-Fi, or the cable is out. Rather than starting a server that
+    nobody can see, that widens to every network this machine is on.
+    """
+    from core.system.network import local_interfaces, normalise_visibility
+    setting = normalise_visibility(visibility or {})
+    if setting["mode"] == "network":
+        try: present = {item["address"] for item in local_interfaces()}
+        except Exception: present = set()
+        if setting["address"] not in present:
+            print(f"{setting['title'] or setting['network']} is not connected right now; "
+                  "the server will be visible on every network this computer is on.")
+            setting = normalise_visibility({**setting, "mode": "all"})
+    flags = ["--visibility", setting["mode"]]
+    if setting["mode"] == "network":
+        flags += ["--network", setting["network"], "--network-address", setting["address"],
+                  "--network-title", setting["title"]]
+    if not setting["listed"]: flags.append("--private")
+    if setting["approve_joins"]: flags.append("--approve-joins")
+    return flags
+
+
+def launch(root: Path, name: str, server_root: Path, token: str, port: int, preset: str | None,
+           visibility: dict | None = None) -> None:
     """Start the control server and stay attached until it stops."""
     running = registry.running_server()
     if running:
@@ -96,6 +122,7 @@ def launch(root: Path, name: str, server_root: Path, token: str, port: int, pres
     command = [sys.executable, "-m", "core.server", "--bind", "0.0.0.0", "--port", str(port),
                "--storage", str(server_root), "--token-file", str(token_path),
                "--admin-device", load_or_create_identity()["id"], "--server-name", name]
+    command += visibility_arguments(visibility)
     log_path = server_root / "logs" / "stratus.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log = log_path.open("a", encoding="utf-8")
@@ -103,7 +130,7 @@ def launch(root: Path, name: str, server_root: Path, token: str, port: int, pres
     process = subprocess.Popen(command, cwd=str(root), stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
 
     entry = {"name": name, "storage": str(server_root), "token": token, "port": port,
-             "pid": process.pid, "log": str(log_path)}
+             "pid": process.pid, "log": str(log_path), "visibility": visibility or {"mode": "all"}}
     registry.set_active(entry)
 
     time.sleep(1)
@@ -134,17 +161,30 @@ def launch(root: Path, name: str, server_root: Path, token: str, port: int, pres
         registry.clear_active()
 
 
-def create_server(root: Path, name: str, selection: dict, token: str, preset: str, port: int = 5050) -> None:
+def create_server(root: Path, name: str, selection: dict, token: str, preset: str, port: int = 5050,
+                  visibility: dict | None = None) -> None:
     server_root = initialize_server_root(selection, slugify(name), name=name, port=port)
-    launch(root, name, server_root, token, free_port(port), preset)
+    remember_visibility(server_root, visibility)
+    launch(root, name, server_root, token, free_port(port), preset, visibility)
+
+
+def remember_visibility(server_root: Path, visibility: dict | None) -> None:
+    """Keep the visibility with the server, so reopening it shows it the same way."""
+    if not visibility: return
+    for item in registry.known_servers():
+        if Path(item.get("storage", "")) == Path(server_root):
+            item = dict(item); item["visibility"] = visibility
+            registry.remember(item); return
 
 
 def open_server(root: Path, server: dict) -> None:
     storage = Path(server["storage"])
     if not storage.is_dir():
         raise SystemExit(f"That server's drive is not connected: {storage}")
+    visibility = server.get("chosen_visibility") or server.get("visibility")
+    if server.get("chosen_visibility"): remember_visibility(storage, visibility)
     launch(root, server.get("name", storage.name), storage, server.get("token", ""),
-           free_port(int(server.get("port", 5050))), None)
+           free_port(int(server.get("port", 5050))), None, visibility)
 
 
 def text_menu(root: Path) -> None:
@@ -190,7 +230,8 @@ def main() -> None:
     if not result: return
     if result["mode"] == "join": join(root)
     elif result["mode"] == "open": open_server(root, result["server"])
-    else: create_server(root, result["name"], result["selection"], result["token"], result["preset"])
+    else: create_server(root, result["name"], result["selection"], result["token"], result["preset"],
+                        visibility=result.get("visibility"))
 
 
 if __name__ == "__main__": main()

@@ -16,10 +16,15 @@ from pathlib import Path
 from core.platform.database import Database
 from core.system.deployment import DeploymentManager
 from core.platform.protocol import receive_message, send_message
-from core.system.discovery import serve_discovery
+from core.system.discovery import announce_forever, serve_discovery
 from core.system.network import lan_address
 from core.platform import platform_api
 from core.system.storage import validate_server_storage
+
+
+# Sent to a device the host has not accepted yet. The client recognises this
+# exact text and keeps asking, instead of reporting a failure.
+WAITING_FOR_HOST = "waiting for the host to accept this device"
 
 
 class ControlHandler(socketserver.BaseRequestHandler):
@@ -47,6 +52,11 @@ class ControlHandler(socketserver.BaseRequestHandler):
 
     def address_permitted(self) -> bool:
         from core.system.network import address_allowed, parse_networks
+        # The visibility the host chose when starting the server comes first:
+        # a server limited to one Wi-Fi network refuses every other network,
+        # whatever the stored policy says.
+        visible = getattr(self.server, "visible_networks", None)
+        if visible and not address_allowed(self.client_address[0], visible): return False
         try:
             configured = self.server.manager.database.get_policy().get("allowed_networks") or []
             if not configured: return True
@@ -92,10 +102,18 @@ class ControlHandler(socketserver.BaseRequestHandler):
         supplied = request.get("device") or {}
         now = time.monotonic()
         cached = self.device is not None and self.device["id"] == supplied.get("id")
-        if not cached or now - self.device_touched > self.DEVICE_TOUCH_SECONDS:
-            self.device = self.server.manager.database.register_device(supplied)
+        if not cached or now - self.device_touched > self.DEVICE_TOUCH_SECONDS or not self.device.get("approved", 1):
+            # The host never waits for their own approval.
+            needs_approval = bool(getattr(self.server, "approve_joins", False)) and not self.is_host(supplied)
+            self.device = self.server.manager.database.register_device(supplied, needs_approval=needs_approval)
             self.device_touched = now
         if self.device["blocked"]: raise PermissionError("this device has been blocked by the host")
+        if not self.device.get("approved", 1):
+            if not self.is_host(self.device): raise PermissionError(WAITING_FOR_HOST)
+            # The host can never be left waiting at their own door, even if an
+            # earlier run recorded their device before it was the host's.
+            self.server.manager.database.decide_join(self.device["id"], True)
+            self.device = dict(self.device, approved=1)
         return self.device
 
     def dispatch(self, request: dict):
@@ -105,8 +123,13 @@ class ControlHandler(socketserver.BaseRequestHandler):
         is_admin = self.is_host(device)
         if action == "ping": return {"pong": True, "server": self.server.server_name}
         if action == "server_info":
+            from core.system.network import join_code
+            port = self.server.server_address[1]
+            try: code = join_code(self.server.lan_address, port)
+            except ValueError: code = ""
             return {"name": self.server.server_name, "address": self.server.lan_address,
-                    "port": self.server.server_address[1],
+                    "port": port, "join_code": code,
+                    "visibility": getattr(self.server, "visibility", {"mode": "all"}),
                     "allowed_networks": database.get_policy().get("allowed_networks") or []}
         if action == "app_ticket":
             # A single-use ticket signs this device into a built-in web app
@@ -160,7 +183,15 @@ class ControlHandler(socketserver.BaseRequestHandler):
         if action == "apps": return database.list_all()
         if action == "recipients": return database.encryption_recipients(request.get("device_ids"))
         if action == "chat_send":
-            return {"id": platform_api.send_message(database, request["conversation_id"], owner, request.get("payload") or {})}
+            message_id = platform_api.send_message(database, request["conversation_id"], owner, request.get("payload") or {})
+            self.server.chat_changed()
+            return {"id": message_id}
+        if action == "chat_wait":
+            # Live chat without hammering the host: the client asks "has anything
+            # changed since version N?" and the answer comes back the moment a
+            # message is sent, or after the timeout if nothing happens.
+            return {"version": self.server.wait_for_chat(int(request.get("since", -1)),
+                                                         min(float(request.get("timeout", 10)), 25.0))}
         if action == "chat_messages":
             return platform_api.messages(database, request["conversation_id"], owner, int(request.get("after", 0)))
         if action == "conversations": return platform_api.conversation_catalogue(database, owner)
@@ -188,6 +219,12 @@ class ControlHandler(socketserver.BaseRequestHandler):
         if action == "groups": return database.groups_for(owner)
         if action == "group_recipients":
             return database.encryption_recipients(database.group_member_ids(request["group_id"], owner))
+        if action == "join_requests":
+            if not is_admin: raise ValueError("host only")
+            return database.join_requests()
+        if action == "decide_join":
+            if not is_admin: raise ValueError("host only")
+            return database.decide_join(str(request.get("device_id", "")), bool(request.get("accept")))
         if action == "policy": return database.get_policy()
         if action == "set-policy":
             if not is_admin: raise ValueError("host policy can only be changed on the host computer")
@@ -246,6 +283,25 @@ class ThreadedServer(socketserver.ThreadingTCPServer):
     server_name = "Stratus Server"
     lan_address = "127.0.0.1"
     admin_device = ""
+    visible_networks: list = []
+    visibility: dict = {"mode": "all"}
+    approve_joins = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.chat_version = 0
+        self.chat_condition = threading.Condition()
+
+    def chat_changed(self) -> None:
+        with self.chat_condition:
+            self.chat_version += 1
+            self.chat_condition.notify_all()
+
+    def wait_for_chat(self, since: int, timeout: float) -> int:
+        with self.chat_condition:
+            if since == self.chat_version:
+                self.chat_condition.wait_for(lambda: self.chat_version != since, timeout=max(0.0, timeout))
+            return self.chat_version
 
 
 RISKY_PATTERNS = (
@@ -374,6 +430,15 @@ def main() -> None:
     parser.add_argument("--max-upload-mb", type=int, default=10)
     parser.add_argument("--server-name", default="Stratus Server")
     parser.add_argument("--discovery-port", type=int, default=5051)
+    parser.add_argument("--visibility", choices=("network", "all"), default="all",
+                        help="network: only the chosen network; all: every network this computer is on")
+    parser.add_argument("--network", default="", help="with --visibility network: the network, e.g. 192.168.1.0/24")
+    parser.add_argument("--network-address", default="", help="this machine's address on that network")
+    parser.add_argument("--network-title", default="", help="a readable name for it, e.g. 'Wi-Fi · Campus'")
+    parser.add_argument("--private", action="store_true",
+                        help="do not appear on anyone's Join screen; members join with the join code")
+    parser.add_argument("--approve-joins", action="store_true",
+                        help="every new device waits until the host accepts it")
     args = parser.parse_args()
     # A token on the command line is readable by every process of this user
     # through /proc, so a file is preferred and the argument stays only for
@@ -389,23 +454,48 @@ def main() -> None:
     storage.mkdir(parents=True, exist_ok=True)
     validate_server_storage(storage)
     if not storage.is_dir() or not storage.stat(): parser.error("storage is unavailable")
+    from core.system.network import normalise_visibility, parse_networks
+    visibility = normalise_visibility({"mode": args.visibility, "network": args.network,
+                                       "address": args.network_address, "title": args.network_title,
+                                       "listed": not args.private, "approve_joins": args.approve_joins})
     db = Database(storage / "platform" / "stratus.db")
     with ThreadedServer((args.bind, args.port), ControlHandler) as server:
         server.token, server.upload_dir, server.max_upload = token, storage / "uploads", args.max_upload_mb * 1024 * 1024
         server.admin_device = args.admin_device
         server.server_name = args.server_name
-        server.lan_address = lan_address()
+        server.visibility = visibility
+        if visibility["mode"] == "network":
+            server.visible_networks = parse_networks([visibility["network"]])
+            server.lan_address = visibility["address"]
+        else:
+            server.lan_address = lan_address()
         server.upload_dir.mkdir(parents=True, exist_ok=True)
         server.manager = DeploymentManager(storage, db, args.port_min, args.port_max)
         install_builtins(server.manager)
         server.manager.restore_auto_start()
         discovery_stop = threading.Event()
-        discovery_thread = threading.Thread(target=serve_discovery, args=(args.server_name, args.port, args.discovery_port, discovery_stop), daemon=True)
-        discovery_thread.start()
+        server.approve_joins = args.approve_joins
+        visible = [visibility["network"]] if visibility["mode"] == "network" else None
+        details = {"visibility": visibility["mode"], "network_title": visibility["title"],
+                   "approval": "host accepts each device" if args.approve_joins else "",
+                   "locked": "yes" if token else ""}
+        if visibility["listed"]:
+            # A private server answers nobody's search and announces nothing.
+            # It is reached only by someone who was given its join code.
+            discovery_thread = threading.Thread(target=serve_discovery, args=(args.server_name, args.port, args.discovery_port, discovery_stop),
+                                                kwargs={"visible": visible, "extra": details}, daemon=True)
+            discovery_thread.start()
+            threading.Thread(target=announce_forever, args=(args.server_name, args.port, discovery_stop),
+                             kwargs={"visible": visible, "extra": details}, daemon=True).start()
         monitor_thread = threading.Thread(target=monitor_deployments, args=(server.manager, discovery_stop), daemon=True)
         monitor_thread.start()
         print(f"Stratus host listening on {args.bind}:{args.port}; storage={storage}", flush=True)
         print(f"Devices on this network reach it at {server.lan_address}:{args.port}", flush=True)
+        from core.system.network import describe_visibility
+        print(f"Visible to: {describe_visibility(visibility)}", flush=True)
+        from core.system.network import join_code
+        try: print(f"Join code: {join_code(server.lan_address, args.port)}", flush=True)
+        except ValueError: pass
         try: server.serve_forever()
         finally: discovery_stop.set(); db.close()
 

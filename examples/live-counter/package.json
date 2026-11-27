@@ -1,0 +1,8 @@
+{
+  "name": "live-counter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Counts visitors and shows the server's uptime, updating every second",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" }
+}

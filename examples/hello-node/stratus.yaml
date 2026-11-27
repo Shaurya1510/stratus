@@ -1,4 +1,4 @@
-name: hello-node
+name: Hello Node
 runtime: node
 start: node server.js
 build: echo "no build step needed for this example"

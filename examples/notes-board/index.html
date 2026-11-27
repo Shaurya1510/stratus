@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Notes Board</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0b1020; color: #e9ecf5; max-width: 760px; margin: 40px auto; padding: 0 16px; }
+  h1 { color: #9b8cff; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #394267; background: #101526; color: #e9ecf5; font-size: 16px; }
+  button { background: #7667ef; color: #fff; border: 0; border-radius: 8px; padding: 10px 16px; font-size: 16px; cursor: pointer; }
+  ul { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  li { background: #1a2039; border-radius: 10px; padding: 12px; position: relative; word-wrap: break-word; }
+  li button { position: absolute; top: 6px; right: 6px; padding: 2px 8px; font-size: 12px; background: #394267; }
+  .dim { color: #7d86a8; }
+</style>
+</head>
+<body>
+  <h1>Notes Board</h1>
+  <p class="dim">A static site hosted on Stratus. Notes are kept in this browser only.</p>
+  <form id="add">
+    <input id="text" placeholder="Write a note and press Enter" maxlength="200" autocomplete="off">
+    <button>Add</button>
+  </form>
+  <ul id="notes"></ul>
+<script>
+  const key = "stratus-notes";
+  const load = () => { try { return JSON.parse(localStorage.getItem(key)) || []; } catch { return []; } };
+  const save = (notes) => { try { localStorage.setItem(key, JSON.stringify(notes)); } catch {} };
+  function render() {
+    const list = document.getElementById("notes");
+    list.replaceChildren(...load().map((note, index) => {
+      const item = document.createElement("li");
+      item.textContent = note;
+      const remove = document.createElement("button");
+      remove.textContent = "×";
+      remove.onclick = () => { const notes = load(); notes.splice(index, 1); save(notes); render(); };
+      item.append(remove);
+      return item;
+    }));
+  }
+  document.getElementById("add").onsubmit = (event) => {
+    event.preventDefault();
+    const input = document.getElementById("text");
+    if (!input.value.trim()) return;
+    save([input.value.trim(), ...load()]);
+    input.value = "";
+    render();
+  };
+  render();
+</script>
+</body>
+</html>

@@ -165,6 +165,182 @@ class StatusBar(Static):
 # ---------------------------------------------------------------------- modals
 
 
+
+
+def format_rate(bytes_per_second: float) -> str:
+    return f"{human_size(bytes_per_second)}/s"
+
+
+class TransferMeter(Static):
+    """A live progress bar for one upload or download, with its speed.
+
+    Hidden until a transfer starts, so it costs no space the rest of the time.
+    """
+
+    DEFAULT_CSS = """
+    TransferMeter { height: auto; padding: 0 2; color: #e9ecf5; display: none; }
+    """
+
+    def report(self, label: str, done: int, total: int, elapsed: float, upload: bool, finished: bool = False) -> None:
+        self.display = True
+        width = 28
+        fraction = (done / total) if total else 1.0
+        filled = int(width * fraction)
+        bar = "[#7ee2a8]" + "█" * filled + "[/][#30395c]" + "░" * (width - filled) + "[/]"
+        rate = done / elapsed if elapsed > 0 else 0.0
+        arrow = "▲ Uploading" if upload else "▼ Downloading"
+        if finished:
+            arrow = "✔ Uploaded" if upload else "✔ Downloaded"
+            tail = f"{human_size(total)} in {elapsed:.1f}s · average {format_rate(rate)}"
+        else:
+            left = (total - done) / rate if rate > 0 else 0
+            tail = f"{fraction * 100:3.0f}% · {human_size(done)} of {human_size(total)} · {format_rate(rate)} · {left:.0f}s left"
+        self.update(f"{arrow} [bold]{escape(label)}[/]  {bar}  {tail}")
+
+
+class TransferTracker:
+    """Turns byte counts from the socket into at most ten screen updates a second."""
+
+    def __init__(self, app, meter: TransferMeter, label: str, upload: bool):
+        import time
+        self.app, self.meter, self.label, self.upload = app, meter, label, upload
+        self.clock = time.perf_counter
+        self.started = self.clock()
+        self.shown = 0.0
+        self.done = self.total = 0
+
+    def update(self, done: int, total: int) -> None:
+        self.done, self.total = done, total
+        now = self.clock()
+        if now - self.shown < 0.1 and done < total: return
+        self.shown = now
+        self.push(False)
+
+    def push(self, finished: bool) -> None:
+        elapsed = max(self.clock() - self.started, 1e-6)
+        try: self.app.call_from_thread(self.meter.report, self.label, self.done, self.total, elapsed, self.upload, finished)
+        except Exception: pass
+
+    def finish(self) -> None:
+        if self.total: self.push(True)
+
+
+def call_with_progress(app, client, meter, label: str, upload: bool, action: str, **extra):
+    """client.call, reporting live transfer progress to `meter` when possible."""
+    from core.platform.session import Session
+    if meter is None or not isinstance(client, Session): return client.call(action, **extra)
+    tracker = TransferTracker(app, meter, label, upload)
+    key = "upload_progress" if upload else "download_progress"
+    result = client.call(action, **{key: tracker.update}, **extra)
+    tracker.finish()
+    return result
+
+
+class NetworkChooser(Vertical):
+    """Which network the server runs on, whether it is listed, and who gets in.
+
+    Each network appears by what it is ("Wi-Fi · Bennett-Campus", "LAN
+    cable") so the host clicks a name instead of typing an address.
+    """
+
+    DEFAULT_CSS = """
+    NetworkChooser { height: auto; }
+    NetworkChooser OptionList { height: 5; background: #0d1222; }
+    NetworkChooser Select { margin: 0; }
+    """
+
+    def __init__(self, current: dict | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.current = current or {}
+        self.choices: list[dict] = []
+
+    def compose(self) -> ComposeResult:
+        yield Label("Network to run on")
+        yield OptionList(id="network-list")
+        yield Select((("Public — everyone on the network sees it", "public"),
+                      ("Private — hidden, join with code + password", "private")),
+                     value="public" if self.current.get("listed", True) is not False else "private",
+                     allow_blank=False, id="listing")
+        yield Select((("Anyone with the password joins straight away", "open"),
+                      ("I accept each person who asks to join", "approve")),
+                     value="approve" if self.current.get("approve_joins") else "open",
+                     allow_blank=False, id="admission")
+        yield Static("", id="network-note", classes="dim")
+
+    def on_mount(self) -> None:
+        self.load()
+
+    def load(self) -> None:
+        from core.system.network import network_choices
+        try: self.choices = network_choices()
+        except Exception: self.choices = []
+        listing = self.query_one("#network-list", OptionList); listing.clear_options()
+        options = [Option(f"[bold]{escape(item['title'])}[/]  [dim]{item['address']}[/]", id=f"net-{index}")
+                   for index, item in enumerate(self.choices)]
+        options.append(Option("[bold]All networks[/]  [dim]every network this computer is on[/]", id="all"))
+        listing.add_options(options)
+        listing.highlighted = self.initial_index()
+        self.explain()
+
+    def initial_index(self) -> int:
+        mode = self.current.get("mode")
+        if mode == "network":
+            for index, item in enumerate(self.choices):
+                if item["network"] == self.current.get("network"): return index
+        if mode == "all" or not self.choices: return len(self.choices)
+        return 0
+
+    @on(OptionList.OptionHighlighted, "#network-list")
+    @on(Select.Changed)
+    def explain(self) -> None:
+        try: value = self.value()
+        except Exception: return
+        where = value.get("title") or "every network this computer is on"
+        if value["listed"]:
+            text = f"Everyone on {where} sees this server on their Join screen."
+        else:
+            text = (f"Hidden on {where}. You get a join code to share; "
+                    "members type it with the password.")
+        if value["approve_joins"]: text += " You accept or reject each new person."
+        self.query_one("#network-note", Static).update(text)
+
+    def value(self) -> dict:
+        listing = self.query_one("#network-list", OptionList)
+        index = listing.highlighted
+        option = listing.get_option_at_index(index) if index is not None and listing.option_count else None
+        key = option.id if option else "all"
+        common = {"listed": self.query_one("#listing", Select).value != "private",
+                  "approve_joins": self.query_one("#admission", Select).value == "approve"}
+        if key and key.startswith("net-"):
+            item = self.choices[int(key[4:])]
+            return {"mode": "network", "network": item["network"], "address": item["address"],
+                    "title": item["title"], **common}
+        return {"mode": "all", **common}
+
+
+class VisibilityDialog(ModalScreen[dict | None]):
+    """Choose who can see a server that already exists, just before it starts."""
+
+    def __init__(self, server: dict):
+        super().__init__(); self.server = server
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="picker"):
+            yield Label(f"START {escape(str(self.server.get('name', 'SERVER')).upper())}", classes="modal-title")
+            yield NetworkChooser(self.server.get("visibility") or {}, id="visibility")
+            with Horizontal(classes="modal-buttons"):
+                yield Button("Start", id="go", variant="success")
+                yield Button("Cancel", id="cancel")
+
+    @on(Button.Pressed, "#go")
+    def go(self) -> None: self.dismiss(self.query_one(NetworkChooser).value())
+
+    @on(Button.Pressed, "#cancel")
+    def cancel(self) -> None: self.dismiss(None)
+
+    def key_escape(self) -> None: self.dismiss(None)
+
+
 class Notice(ModalScreen[None]):
     BINDINGS = [Binding("escape", "dismiss", "Close")]
 
@@ -382,35 +558,97 @@ class LogViewer(ModalScreen[None]):
     def close(self) -> None: self.dismiss()
 
 
+EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples"
+
+
+def demo_projects() -> list[dict]:
+    """The ready-made projects in examples/, each one deployable as it is."""
+    found = []
+    try: folders = sorted(path for path in EXAMPLES_DIR.iterdir() if (path / "stratus.yaml").is_file())
+    except OSError: return []
+    for folder in folders:
+        try: fields = read_manifest(folder)
+        except Exception: continue
+        found.append({"path": folder, "name": fields["name"], "runtime": fields["runtime"]})
+    return found
+
+
+def check_project(project: Path) -> dict:
+    """Look a project over before it is sent, the same way the host will.
+
+    Returns whether it can be sent at all, its manifest, its size, and the
+    same notes the host's review screen shows, so the person sending it sees
+    exactly what the host is about to see.
+    """
+    from core.server import review_notes
+    fields = read_manifest(project)
+    files = [path for path in project.rglob("*") if path.is_file() and ".git" not in path.parts]
+    size = sum(path.stat().st_size for path in files)
+    problems = []
+    if size > MAX_TRANSFER_BYTES: problems.append(f"too large ({human_size(size)}; the limit is {human_size(MAX_TRANSFER_BYTES)})")
+    if fields["runtime"] not in {"static", "python", "node"}: problems.append(f"unknown runtime '{fields['runtime']}'")
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as temp:
+        archive = Path(temp.name)
+    try:
+        archive.write_bytes(bundle_project(project))
+        notes = review_notes(archive)
+    finally:
+        archive.unlink(missing_ok=True)
+    return {"fields": fields, "files": len(files), "size": size, "problems": problems, "notes": notes}
+
+
 class DeployDialog(ModalScreen[Path | None]):
+    """Send a project to the host: pick a demo or a folder, check it, send it."""
+
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    DEFAULT_CSS = """
+    #demo-list { height: 7; background: #0d1222; margin-bottom: 1; }
+    """
 
     def compose(self) -> ComposeResult:
         with Vertical(id="deploy-dialog"):
-            yield Label("DEPLOY AN APPLICATION", classes="modal-title")
-            yield Static(
-                "Paste a project folder that contains stratus.yaml, or drag the folder "
-                "from the Linux file manager into this field.", classes="dim")
+            yield Label("SEND A PROJECT TO THE HOST", classes="modal-title")
+            yield Static("Pick a demo, or paste (or drag in) a folder that contains stratus.yaml. "
+                         "The host checks it and decides whether it runs.", classes="dim")
+            yield Label("Demo projects")
+            yield OptionList(id="demo-list")
+            yield Label("Project folder")
             yield Input(placeholder="/home/you/my-application", id="project-path")
             yield Static("", id="manifest-preview")
             with Horizontal(classes="modal-buttons"):
-                yield Button("Upload & Deploy", id="deploy-now", variant="success"); yield Button("Cancel", id="cancel")
+                yield Button("Send Project", id="deploy-now", variant="success"); yield Button("Cancel", id="cancel")
 
-    def on_mount(self) -> None: self.query_one("#project-path", Input).focus()
+    def on_mount(self) -> None:
+        self.demos = demo_projects()
+        listing = self.query_one("#demo-list", OptionList)
+        listing.add_options([Option(f"[bold]{escape(item['name'])}[/]  [dim]{item['runtime']} · examples/{item['path'].name}[/]",
+                                    id=str(index)) for index, item in enumerate(self.demos)]
+                            or [Option("[dim]No demo projects found[/]", disabled=True)])
+        self.query_one("#project-path", Input).focus()
+
+    @on(OptionList.OptionSelected, "#demo-list")
+    def choose_demo(self, event: OptionList.OptionSelected) -> None:
+        self.query_one("#project-path", Input).value = str(self.demos[int(event.option.id)]["path"])
 
     @on(Input.Changed, "#project-path")
     def preview(self) -> None:
         project = local_path(self.query_one("#project-path", Input).value)
-        manifest = project / "stratus.yaml"
         widget = self.query_one("#manifest-preview", Static)
-        if not manifest.is_file():
+        if not (project / "stratus.yaml").is_file():
             widget.update("[#7d86a8]Waiting for a folder containing stratus.yaml…[/]"); return
-        try: fields = read_manifest(project)
-        except Exception as exc: widget.update(f"[#ff8a9b]{exc}[/]"); return
-        size = sum(path.stat().st_size for path in project.rglob("*") if path.is_file() and ".git" not in path.parts)
-        widget.update(
-            f"[#7ee2a8]{fields.get('name', '?')}[/] · runtime {fields.get('runtime', '?')} · "
-            f"start `{fields.get('start', '?')}` · about {human_size(size)} before compression")
+        try: report = check_project(project)
+        except Exception as exc: widget.update(f"[#ff8a9b]✘ {escape(str(exc))}[/]"); return
+        fields = report["fields"]
+        lines = [f"[#7ee2a8]✔ {escape(fields.get('name', '?'))}[/] · {fields.get('runtime', '?')} · "
+                 f"{report['files']} file(s) · {human_size(report['size'])} · start `{escape(fields.get('start', '?'))}`"]
+        lines += [f"[#ff8a9b]✘ {escape(problem)}[/]" for problem in report["problems"]]
+        if report["notes"]:
+            lines.append("[#ffcf7a]The host will be told this project:[/]")
+            lines += [f"[#ffcf7a]  • {escape(note)}[/]" for note in report["notes"]]
+        else:
+            lines.append("[#7ee2a8]✔ Nothing unusual found[/]")
+        widget.update("\n".join(lines))
 
     @on(Button.Pressed)
     def pressed(self, event: Button.Pressed) -> None:
@@ -418,6 +656,10 @@ class DeployDialog(ModalScreen[Path | None]):
         project = local_path(self.query_one("#project-path", Input).value)
         if not project.is_dir() or not (project / "stratus.yaml").is_file():
             self.app.notify("Choose a folder containing stratus.yaml", severity="error"); return
+        try: report = check_project(project)
+        except Exception as exc: self.app.notify(str(exc), severity="error"); return
+        if report["problems"]:
+            self.app.notify("; ".join(report["problems"]), severity="error"); return
         self.dismiss(project)
 
     def action_cancel(self) -> None: self.dismiss(None)
@@ -459,8 +701,10 @@ class ChatScreen(Screen):
     #send { width: 12; margin: 0 0 0 1; }
     """
 
-    POLL_SECONDS = 0.8
-    OVERVIEW_SECONDS = 4.0
+    # The live connection delivers new messages instantly; this regular check
+    # is only the safety net, so it can afford to be slow.
+    POLL_SECONDS = 3.0
+    OVERVIEW_SECONDS = 6.0
 
     def __init__(self, client):
         super().__init__()
@@ -484,6 +728,7 @@ class ChatScreen(Screen):
         with Vertical(id="chat-main"):
             yield Static("# General", id="conversation-title")
             yield RichLog(id="messages", wrap=True, markup=True)
+            yield TransferMeter(id="transfer")
             with Horizontal(id="composer-row"):
                 yield Input(placeholder="Write a message, or /file /path/to/document.pdf", id="composer")
                 yield Button("Send", id="send", variant="primary")
@@ -496,8 +741,42 @@ class ChatScreen(Screen):
         self.open_conversation("general", "# General")
         self.set_interval(self.POLL_SECONDS, self.poll)
         self.set_interval(self.OVERVIEW_SECONDS, self.load_sidebar)
+        import threading
+        self.leaving = threading.Event()
+        self.live_updates()
+
+    def on_unmount(self) -> None:
+        self.leaving.set()
 
     # ------------------------------------------------------------- background
+
+    @work(thread=True, exclusive=True, group="chat-live")
+    def live_updates(self) -> None:
+        """Show new messages the moment they are sent.
+
+        A second connection waits on the host, which answers as soon as anyone
+        sends a message. That is what makes a reply appear instantly while the
+        regular check stays slow and cheap. A host too old to support waiting
+        simply leaves the regular check doing the work.
+        """
+        from core.platform.session import Session
+        host, port = getattr(self.client, "host", None), getattr(self.client, "port", None)
+        if not host or not port: return
+        waiter = Session(host, port, getattr(self.client, "token", ""),
+                         identity=getattr(self.client, "identity", None), timeout=20)
+        version = -1
+        try:
+            while not self.leaving.is_set():
+                try: latest = int(as_dict(waiter.call("chat_wait", since=version, timeout=10)).get("version", 0))
+                except Exception:
+                    if self.leaving.wait(3): return
+                    continue
+                if version != -1 and latest != version:
+                    self.call_ui(self.poll)
+                    self.call_ui(self.load_sidebar)
+                version = latest
+        finally:
+            waiter.close()
 
     @work(thread=True, exclusive=True, group="chat-sidebar")
     def load_sidebar(self) -> None:
@@ -666,7 +945,8 @@ class ChatScreen(Screen):
         self.notify_thread(f"Encrypting {source.name}…", "information")
         file_id = uuid.uuid4().hex
         scope = "public" if conversation == "general" else ("group:" + conversation if conversation.startswith("group-") else "direct")
-        self.client.call(
+        call_with_progress(
+            self.app, self.client, self.query_one("#transfer", TransferMeter), source.name, True,
             "drive_upload", id=file_id, scope=scope,
             encrypted_name=encrypt(source.name.encode(), recipients, file_id.encode()),
             payload=encrypt(source.read_bytes(), recipients, file_id.encode()),
@@ -779,6 +1059,7 @@ class DriveScreen(Screen):
                 yield Button("Download", id="download", variant="primary")
                 yield Button("Rename", id="rename")
                 yield Button("Delete", id="delete", variant="error")
+            yield TransferMeter(id="transfer")
             yield DataTable(id="files", cursor_type="row", zebra_stripes=True)
             yield StatusBar(self.client, "[dim]encrypted before upload[/]")
         yield Footer()
@@ -973,7 +1254,8 @@ class DriveScreen(Screen):
             pin_peer_keys(recipients)
             self.notify_thread(f"Encrypting {source.name} for {len(recipients)} device(s)…", "information")
             file_id = uuid.uuid4().hex
-            self.client.call(
+            call_with_progress(
+                self.app, self.client, self.query_one("#transfer", TransferMeter), source.name, True,
                 "drive_upload", id=file_id, scope=scope,
                 encrypted_name=encrypt(source.name.encode(), recipients, file_id.encode()),
                 payload=encrypt(source.read_bytes(), recipients, file_id.encode()))
@@ -997,7 +1279,8 @@ class DriveScreen(Screen):
     def fetch_file(self, file_id: str, destination: Path) -> None:
         try:
             identity = getattr(self.client, "identity", {}) or {}
-            item = self.client.call("drive_get", id=file_id)
+            item = call_with_progress(self.app, self.client, self.query_one("#transfer", TransferMeter),
+                                      destination.name, False, "drive_get", id=file_id)
             content = decrypt(item["payload"], identity, file_id.encode())
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
@@ -1276,7 +1559,7 @@ class ClientDashboard(Screen):
             with Vertical(classes="menu-panel"):
                 yield Label("APPLICATION CLOUD", classes="panel-title")
                 yield Button("Hosted Applications  (A)", id="apps")
-                yield Button("Deploy an Application", id="deploy")
+                yield Button("Send a Project (demos included)", id="deploy")
                 yield Button("My Hosted Apps", id="mine")
                 yield Button("Disconnect", id="disconnect", variant="error")
         yield StatusBar(self.client)
@@ -1341,7 +1624,9 @@ class ClientDashboard(Screen):
             self.notify_thread(str(exc)); return
         summary = as_dict(result)
         if summary.get("status") == "PENDING_APPROVAL":
-            message = f"{fields['name']} was uploaded and is waiting for the host to approve it."
+            message = (f"{fields['name']} was sent to the host.\n\n"
+                       "The host sees what it contains and decides whether it runs. "
+                       "Once approved it appears under Hosted Applications with its address.")
         else:
             host = getattr(self.client, "host", "the host")
             url = f"http://{host}:{summary.get('port', '?')}"
@@ -1382,14 +1667,14 @@ class JoinScreen(Screen):
             with Vertical(classes="panel"):
                 yield Label("NEARBY SERVERS", classes="panel-title")
                 yield OptionList(id="server-list")
-                yield Static("Press R to scan this network again.", classes="dim")
+                yield Static("Servers appear here by themselves. Press R to search again.", classes="dim")
             with Vertical(classes="panel"):
                 yield Label("CONNECT", classes="panel-title")
-                yield Label("Host address")
-                yield Input(placeholder="192.168.1.10", id="join-host")
+                yield Label("Join code or host address")
+                yield Input(placeholder="60N0-NQA4-XT  or  192.168.1.10", id="join-host")
                 yield Label("Control port")
                 yield Input("5050", id="join-port", type="integer")
-                yield Label("Join token (blank for an open server)")
+                yield Label("Password (blank if the server has none)")
                 yield Input(password=True, id="join-token")
                 yield Button("Join Server", id="join", variant="success")
                 yield Static("", id="join-status")
@@ -1397,7 +1682,36 @@ class JoinScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        import threading
+        self.heard: dict[tuple[str, int], dict] = {}
+        self.listening = threading.Event()
+        self.listen()
         self.action_rescan(); self.query_one("#join-host", Input).focus()
+
+    def on_unmount(self) -> None:
+        self.listening.set()
+
+    @work(thread=True, exclusive=True, group="listen")
+    def listen(self) -> None:
+        """Hear servers announcing themselves, for as long as this screen is open.
+
+        This is what makes a server simply appear: the host announces every two
+        seconds, so nobody has to press anything for it to show up.
+        """
+        from core.system.discovery import listen_for_announcements
+
+        def heard(item: dict) -> None:
+            key = (item["host"], int(item["control_port"]))
+            if key in self.heard: return
+            self.heard[key] = item
+            self.call_ui(self.add_heard, item)
+
+        listen_for_announcements(heard, self.listening)
+
+    def add_heard(self, item: dict) -> None:
+        known = {(entry["host"], int(entry["control_port"])) for entry in self.servers}
+        if (item["host"], int(item["control_port"])) in known: return
+        self.render_servers(self.servers + [item], self.interfaces, False)
 
     def action_rescan(self) -> None:
         self.status("Searching this local network…")
@@ -1440,7 +1754,7 @@ class JoinScreen(Screen):
         # answer again. Overwriting the list would take a server off the screen
         # that the user was about to click.
         merged: dict[tuple[str, int], dict] = {}
-        for item in list(quick) + list(wide):
+        for item in list(quick) + list(wide) + list(getattr(self, "heard", {}).values()):
             try: merged[(item["host"], int(item["control_port"]))] = item
             except (KeyError, TypeError, ValueError): continue
         self.call_ui(self.render_servers, list(merged.values()), interfaces, False)
@@ -1468,14 +1782,21 @@ class JoinScreen(Screen):
             else:
                 self.explain_empty()
             return
-        listing.add_options([
-            Option(f"{item['name']}  —  {item['host']}:{item['control_port']}", id=str(index))
-            for index, item in enumerate(servers)])
+        listing.add_options([Option(self.describe_server(item), id=str(index)) for index, item in enumerate(servers)])
         listing.highlighted = 0
         if searching:
             self.status(f"Found {len(servers)} so far, still searching…", "good")
         else:
-            self.status(f"Found {len(servers)} server(s). Choose one, then enter the token.", "good")
+            self.status(f"Found {len(servers)} server(s). Choose one, then enter its password if it has one.", "good")
+
+    @staticmethod
+    def describe_server(item: dict) -> str:
+        badges = []
+        if item.get("locked"): badges.append("[#ffcf7a]· password[/]")
+        if item.get("approval"): badges.append("[#a99dff]· host approves[/]")
+        where = item.get("network_title") or f"{item['host']}:{item['control_port']}"
+        return (f"[bold]{escape(str(item.get('name', 'Stratus Server')))}[/]  [dim]{escape(str(where))}[/]"
+                + ("  " + " ".join(badges) if badges else ""))
 
     def explain_empty(self) -> None:
         """Say which network this device is actually on, and what usually breaks.
@@ -1530,19 +1851,37 @@ class JoinScreen(Screen):
     def join_pressed(self) -> None: self.join()
 
     def join(self) -> None:
-        host = self.query_one("#join-host", Input).value.strip()
-        port = self.query_one("#join-port", Input).value.strip() or "5050"
-        if not host: self.status("Enter a host address or choose a discovered server.", "bad"); return
+        from core.system.network import parse_join_target
+        raw = self.query_one("#join-host", Input).value.strip()
+        port_text = self.query_one("#join-port", Input).value.strip() or "5050"
+        if not raw: self.status("Choose a server, or type its join code or address.", "bad"); return
+        try: default_port = int(port_text)
+        except ValueError: default_port = 5050
+        target = parse_join_target(raw, default_port)
+        if not target: self.status("That is not a join code or an address.", "bad"); return
+        host, port = target
         self.status(f"Connecting to {host}:{port}…")
-        self.connect(host, int(port), self.query_one("#join-token", Input).value)
+        self.connect(host, port, self.query_one("#join-token", Input).value)
 
     @work(thread=True, exclusive=True, group="join")
     def connect(self, host: str, port: int, token: str) -> None:
+        import time as _time
         from core.platform.session import probe
-        try: session = probe(host, port, token)
-        except Exception as exc:
-            self.call_ui(self.status, f"Could not join: {exc}", "bad")
-            self.call_ui(self.focus_token); return
+        asked = False
+        while True:
+            try:
+                session = probe(host, port, token); break
+            except Exception as exc:
+                # A server where the host accepts each person: this device is
+                # now on the host's list. Keep asking quietly until they decide.
+                if "waiting for the host" in str(exc) and not self.listening.is_set():
+                    if not asked:
+                        self.call_ui(self.status, "Request sent. Waiting for the host to let you in…", "warn")
+                        asked = True
+                    _time.sleep(3); continue
+                message = "The host turned this device away." if "blocked" in str(exc) else f"Could not join: {exc}"
+                self.call_ui(self.status, message, "bad")
+                self.call_ui(self.focus_token); return
         label = ""
         for name in self.servers:
             if name["host"] == host:
@@ -1679,6 +2018,7 @@ class AdminDashboard(Screen):
                 yield Button("Enable / Disable Guest Hosting", id="toggle", variant="warning")
                 yield Button("Who May Join (network range)", id="range")
                 yield Button("Enter Server Workspace", id="workspace", variant="success")
+                yield Static("", id="server-access")
                 yield Static("", id="status")
                 yield Static("", id="policy-summary", classes="dim")
             with Vertical(classes="panel"):
@@ -1688,6 +2028,11 @@ class AdminDashboard(Screen):
                         yield DataTable(id="admin-devices", cursor_type="row", zebra_stripes=True)
                     with TabPane("Applications", id="tab-apps"):
                         yield DataTable(id="admin-apps", cursor_type="row", zebra_stripes=True)
+                    with TabPane("Join requests", id="tab-joins"):
+                        yield DataTable(id="join-requests", cursor_type="row", zebra_stripes=True)
+                        with Horizontal(classes="modal-buttons"):
+                            yield Button("Let In", id="accept-join", variant="success")
+                            yield Button("Turn Away", id="reject-join", variant="error")
                     with TabPane("Approvals", id="tab-approvals"):
                         yield ApprovalsPanel(self.call)
         yield Static("", id="admin-status-line", classes="dim")
@@ -1696,6 +2041,8 @@ class AdminDashboard(Screen):
     def on_mount(self) -> None:
         self.query_one("#admin-devices", DataTable).add_columns("Device", "Platform", "First seen", "Last seen", "State")
         self.query_one("#admin-apps", DataTable).add_columns("Application", "Owner", "Status", "Port", "Runtime")
+        self.query_one("#join-requests", DataTable).add_columns("Who is asking", "Computer", "Platform", "Asked")
+        self.join_requests: list[dict] = []
         self.action_reload(); self.set_interval(4.0, self.action_reload)
 
     def capabilities(self) -> dict:
@@ -1718,12 +2065,49 @@ class AdminDashboard(Screen):
             policy = as_dict(self.call("policy"))
         except Exception as exc:
             self.call_ui(self.app.notify, str(exc)); return
+        try: info = as_dict(self.call("server_info"))
+        except Exception: info = {}
+        try: requests = as_list(self.call("join_requests"))
+        except Exception: requests = []
+        self.call_ui(self.render_access, info, requests)
         self.call_ui(self.render_tables, devices, apps, policy)
+
+    def render_access(self, info: dict, requests: list[dict]) -> None:
+        """How people reach this server, and who is waiting at the door."""
+        from core.system.network import describe_visibility
+        visibility = as_dict(info.get("visibility"))
+        lines = []
+        if info:
+            lines.append(f"[bold]Running on:[/] {escape(describe_visibility(visibility))}")
+            lines.append(f"[bold]Join code:[/] [#7ee2a8]{info.get('join_code', '')}[/]  "
+                         f"[dim]or {info.get('address', '')}:{info.get('port', '')}[/]")
+        if visibility.get("approve_joins"):
+            lines.append(f"[#ffcf7a]{len(requests)} waiting to join[/]" if requests else "[dim]Nobody waiting to join[/]")
+        self.query_one("#server-access", Static).update("\n".join(lines))
+        previous = {item["id"] for item in self.join_requests}
+        for item in requests:
+            if item["id"] not in previous:
+                self.app.notify(f"{item.get('display_name', 'Someone')} is asking to join", timeout=8)
+        self.join_requests = requests
+        table = self.query_one("#join-requests", DataTable); table.clear()
+        for index, item in enumerate(requests):
+            table.add_row(item.get("display_name", ""), item.get("hostname", ""), item.get("platform", ""),
+                          relative_time(item.get("first_seen", "")), key=str(index))
+
+    def decide_join(self, accept: bool) -> None:
+        table = self.query_one("#join-requests", DataTable)
+        if not table.row_count: self.app.notify("Nobody is waiting", severity="warning"); return
+        try: item = self.join_requests[int(str(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value))]
+        except Exception: return
+        try: self.call("decide_join", device_id=item["id"], accept=accept)
+        except Exception as exc: self.app.notify(str(exc), severity="error"); return
+        self.app.notify(f"{item.get('display_name', 'Device')} {'let in' if accept else 'turned away'}")
+        self.action_reload()
 
     def render_tables(self, devices: list[dict], apps: list[dict], policy: dict) -> None:
         table = self.query_one("#admin-devices", DataTable); table.clear()
         for item in devices:
-            state = "blocked" if item.get("blocked") else "allowed"
+            state = "blocked" if item.get("blocked") else ("waiting" if not item.get("approved", 1) else "allowed")
             table.add_row(item.get("display_name", ""), item.get("platform", ""), relative_time(item.get("first_seen", "")),
                           relative_time(item.get("last_seen", "")), state)
         table = self.query_one("#admin-apps", DataTable); table.clear()
@@ -1785,6 +2169,8 @@ class AdminDashboard(Screen):
             self.app.push_screen(NetworkRange(policy.get("allowed_networks") or [], local_subnet()), self.apply_range)
         elif event.button.id == "workspace":
             self.open_workspace()
+        elif event.button.id in {"accept-join", "reject-join"}:
+            self.decide_join(event.button.id == "accept-join")
 
     def open_workspace(self) -> None:
         """Join this server as an ordinary member, in a new window.
@@ -1890,6 +2276,8 @@ class HostSetupScreen(Screen):
     CSS = """
     #setup-grid { grid-size: 2; grid-columns: 3fr 2fr; grid-gutter: 2; padding: 1 3; height: 1fr; }
     #storage-table { height: 1fr; }
+    #storage-panel { height: 1fr; }
+    #network-panel { height: auto; }
     #setup-warning { margin-top: 1; }
     """
 
@@ -1899,17 +2287,21 @@ class HostSetupScreen(Screen):
         yield Header(show_clock=True)
         yield Static(LOGO, id="logo")
         with Grid(id="setup-grid"):
-            with Vertical(classes="panel"):
-                yield Label("SERVER STORAGE", classes="panel-title")
-                yield Static("Stratus never formats a drive. It creates one StratusData folder on the drive you pick.", classes="dim")
-                yield DataTable(id="storage-table", cursor_type="row", zebra_stripes=True)
-                yield Button("Use another mounted directory…", id="custom-storage")
-                yield Static("", id="setup-warning", classes="warn")
-            with Vertical(classes="panel"):
+            with Vertical(id="setup-left"):
+                with Vertical(classes="panel", id="storage-panel"):
+                    yield Label("SERVER STORAGE", classes="panel-title")
+                    yield Static("Stratus never formats a drive. It creates one StratusData folder on the drive you pick.", classes="dim")
+                    yield DataTable(id="storage-table", cursor_type="row", zebra_stripes=True)
+                    yield Button("Use another mounted directory…", id="custom-storage")
+                    yield Static("", id="setup-warning", classes="warn")
+                with Vertical(classes="panel", id="network-panel"):
+                    yield Label("NETWORK & ACCESS", classes="panel-title")
+                    yield NetworkChooser(id="visibility")
+            with VerticalScroll(classes="panel"):
                 yield Label("SERVER DETAILS", classes="panel-title")
                 yield Label("Server name")
                 yield Input("My Stratus Server", id="server-name")
-                yield Label("Join token (blank makes an open server)")
+                yield Label("Password / join token (optional for public servers)")
                 yield Input(password=True, id="server-token")
                 yield Label("Starting hosting policy")
                 yield Select((("Low — safest", "low"), ("Medium — recommended", "medium"), ("High — powerful hosts", "high")),
@@ -1996,7 +2388,10 @@ class HostSetupScreen(Screen):
         if not item: self.app.notify("Choose where the server data should live", severity="error"); return
 
         details = {"name": name, "token": self.query_one("#server-token", Input).value,
-                   "preset": str(self.query_one("#server-preset", Select).value)}
+                   "preset": str(self.query_one("#server-preset", Select).value),
+                   "visibility": self.query_one(NetworkChooser).value()}
+        if not details["visibility"]["listed"] and not details["token"]:
+            self.app.notify("A private server needs a password (join token)", severity="error"); return
         if item.get("mounted", True):
             self.finish(item, details); return
 
@@ -2305,7 +2700,13 @@ class ServerPicker(Screen):
         if running:
             self.app.notify(f"{running.get('name', 'A server')} is already running. Stop it first.", severity="error")
             return
-        self.app.result = {"mode": "open", "server": server}
+        self.app.push_screen(VisibilityDialog(server), lambda chosen: self.start_with(server, chosen))
+
+    def start_with(self, server: dict, chosen: dict | None) -> None:
+        if chosen is None: return
+        if not chosen.get("listed", True) and not server.get("token"):
+            self.app.notify("This server has no password, so it cannot be private", severity="error"); return
+        self.app.result = {"mode": "open", "server": {**server, "chosen_visibility": chosen}}
         self.app.exit()
 
     def do_forget(self, server: dict) -> None:
